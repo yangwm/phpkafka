@@ -95,6 +95,7 @@ PHP_METHOD(Kafka, __construct)
         brokers, brokers_len TSRMLS_DC
     );
     kafka_connect(brokers);
+    kafka_init_connection(0);
     //update connected flag
     zend_update_property_bool(
         kafka_ce, this_obj, "connected", sizeof("connected") -1,
@@ -131,6 +132,7 @@ PHP_METHOD(Kafka, setBrokers)
         brokers, brokers_len TSRMLS_DC
     );
     kafka_connect(brokers);
+    kafka_init_connection(0);
     //update connected flag
     zend_update_property_bool(
         kafka_ce, this_obj, "connected", sizeof("connected") -1,

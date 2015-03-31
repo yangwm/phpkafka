@@ -87,6 +87,46 @@ void kafka_destroy()
     }
 }
 
+//open connection to current brokers
+//pass 1 in case of an internal call
+int kafka_init_connection( int internal_call )
+{
+    if (rk == NULL) {
+        char errstr[512];
+        //get kafka config
+        rd_kafka_conf_t *conf = rd_kafka_conf_new();
+        //create new producer
+        rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+        //ensure success
+        if (!rk) {
+            if (internal_call != 1) {
+                return -1;
+            }
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - failed to create new producer: %s", errstr);
+            exit( EXIT_FAILURE );
+        }
+        //add brokers
+        if (rd_kafka_brokers_add(rk, brokers) == 0) {
+            if (internal_call != 1) {
+                return -1;
+            }
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "php kafka - No valid brokers specified");
+            exit( EXIT_FAILURE );//should PHP fail here? perhaps return 1 or 0, let php trigger errors?
+        }
+        /* Set up a message delivery report callback.
+         * It will be called once for each message, either on successful
+         * delivery to broker, or upon failure to deliver to broker. */
+        rd_kafka_conf_set_dr_cb(conf, kafka_msg_delivered);
+        rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
+
+        openlog("phpkafka", 0, LOG_USER);
+        syslog(LOG_INFO, "phpkafka - using: %s", brokers);
+    }
+    return 0;
+}
+
 void kafka_produce(char* topic, char* msg, int msg_len)
 {
 
@@ -99,33 +139,7 @@ void kafka_produce(char* topic, char* msg, int msg_len)
     rd_kafka_topic_conf_t *topic_conf;
 
     if(rk == NULL) {
-        char errstr[512];
-        rd_kafka_conf_t *conf;
-
-        /* Kafka configuration */
-        conf = rd_kafka_conf_new();
-
-        if (!(rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr)))) {
-                openlog("phpkafka", 0, LOG_USER);
-                syslog(LOG_INFO, "phpkafka - failed to create new producer: %s", errstr);
-                exit(1);
-        }
-
-        /* Add brokers */
-        if (rd_kafka_brokers_add(rk, brokers) == 0) {
-                openlog("phpkafka", 0, LOG_USER);
-                syslog(LOG_INFO, "php kafka - No valid brokers specified");
-                exit(1);
-        }
-
-        /* Set up a message delivery report callback.
-         * It will be called once for each message, either on successful
-         * delivery to broker, or upon failure to deliver to broker. */
-        rd_kafka_conf_set_dr_cb(conf, kafka_msg_delivered);
-        rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
-
-        openlog("phpkafka", 0, LOG_USER);
-        syslog(LOG_INFO, "phpkafka - using: %s", brokers);
+        kafka_init_connection(1);
     }
 
     /* Topic configuration */
