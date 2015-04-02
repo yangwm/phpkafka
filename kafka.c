@@ -28,69 +28,7 @@
 #include <time.h>
 #include "kafka.h"
 #include "librdkafka/rdkafka.h"
-typedef struct rd_kafka_topic_conf_s {
-    int     required_acks;
-        int     enforce_isr_cnt;
-    int32_t request_timeout_ms;
-    int     message_timeout_ms;
 
-    int32_t (*partitioner) (const rd_kafka_topic_t *rkt,
-                const void *keydata, size_t keylen,
-                int32_t partition_cnt,
-                void *rkt_opaque,
-                void *msg_opaque);
-
-        int     produce_offset_report;
-
-        char   *group_id_str;
-        void *group_id;    /* Consumer group id in protocol format */
-
-    int     auto_commit;
-    int     auto_commit_interval_ms;
-    int     auto_offset_reset;
-    char   *offset_store_path;
-    int     offset_store_sync_interval_ms;
-        enum {
-                RD_KAFKA_OFFSET_METHOD_FILE,
-                RD_KAFKA_OFFSET_METHOD_BROKER,
-        } offset_store_method;
-
-    /* Application provided opaque pointer (this is rkt_opaque) */
-    void   *opaque;
-} rd_kafka_topic_conf_t;
-struct rd_kafka_topic_s {
-    struct {
-        struct rd_kafka_topic_s *tqe_next;
-        struct rd_kafka_topic_s **tqe_prev;
-    };
-
-    int                rkt_refcnt;
-
-    pthread_rwlock_t   rkt_lock;
-    void *rkt_topic;
-    struct rd_kafka_toppar_s  *rkt_ua;  /* unassigned partition */
-    struct rd_kafka_toppar_s **rkt_p;
-    int32_t            rkt_partition_cnt;
-    struct {
-        void * tqh_first;
-        void * tqh_last;
-    } rkt_desp;
-    uint64_t             rkt_ts_metadata; /* Timestamp of last metadata
-                         * update for this topic. */
-
-    enum {
-        RD_KAFKA_TOPIC_S_UNKNOWN,   /* No cluster information yet */
-        RD_KAFKA_TOPIC_S_EXISTS,    /* Topic exists in cluster */
-        RD_KAFKA_TOPIC_S_NOTEXISTS, /* Topic is not known in cluster */
-    } rkt_state;
-
-        int                rkt_flags;
-#define RD_KAFKA_TOPIC_F_LEADER_QUERY  0x1 /* There is an outstanding
-                                            * leader query for this topic */
-    rd_kafka_t* rkt_rk;
-
-    rd_kafka_topic_conf_t rkt_conf;
-};
 static int run = 1;
 static rd_kafka_t *rk;
 static rd_kafka_type_t rk_type;
@@ -281,9 +219,14 @@ void kafka_get_partitions(zval *return_value, char *topic)
 
     /* Create topic */
     rkt = rd_kafka_topic_new(rk, topic, conf);
-
-    for (i=0;i < (rkt)->rkt_partition_cnt;++i) {
-        add_next_index_long(return_value, i);
+    //metadata API required rd_kafka_metadata_t** to be passed
+    struct rd_kafka_metadata *meta[1];
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, meta, 200))
+    {
+        for (i=0;i<meta[0]->topics->partition_cnt;++i) {
+            add_next_index_long(return_value, i);
+        }
+        rd_kafka_metadata_destroy(meta[0]);
     }
 }
 
