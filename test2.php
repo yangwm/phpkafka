@@ -9,9 +9,9 @@ printf(
 );
 $kafka->produce($topic, $msg);
 echo 'Done', PHP_EOL;
-echo 'Listing partitions for topic ', $topic, PHP_EOL
+echo 'Listing partitions for topic ', $topic, PHP_EOL;
 var_dump($kafka->getPartitionsForTopic('eliasTest'));
-echo 'Closing, and reopening connection', PHP_EOL
+echo 'Closing, and reopening connection', PHP_EOL;
 $kafka = new \Kafka("kafka-1:9092,kafka-2:9092");
 echo 'Done... Now selecting partition 2', PHP_EOL;
 $kafka->setPartition(2);
@@ -24,7 +24,7 @@ printf('Read all %d messages in %fms, or %f per message' . PHP_EOL,
     $end - $start,
     $read ? ($end - $start)/$read : 0
 );
-echo 'Dumping messages'
+echo 'Dumping messages';
 var_dump($cons);
 echo 'Closing connection', PHP_EOL;
 $kafka->disconnect();
