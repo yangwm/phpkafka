@@ -31,3 +31,5 @@ run-tests.php
 autom4te.cache
 nbproject/
 .project
+test2.php
+recompile.sh
