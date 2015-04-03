@@ -213,7 +213,7 @@ void kafka_get_partitions(zval *return_value, char *topic)
     int i;//C89 compliant
     //connect if required
     //preserve current type
-    kafka_init(rk_type);
+    kafka_init(RD_KAFKA_CONSUMER);
     /* Topic configuration */
     conf = rd_kafka_topic_conf_new();
 
