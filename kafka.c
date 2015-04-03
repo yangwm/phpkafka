@@ -220,7 +220,7 @@ void kafka_get_partitions(zval *return_value, char *topic)
     /* Create topic */
     rkt = rd_kafka_topic_new(rk, topic, conf);
     //metadata API required rd_kafka_metadata_t** to be passed
-    rd_kafka_metadata_t *meta[1];
+    const struct rd_kafka_metadata *meta[1];
     if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, meta, 200))
     {
         for (i=0;i<meta[0]->topics->partition_cnt;++i) {
