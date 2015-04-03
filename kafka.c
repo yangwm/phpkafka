@@ -16,7 +16,7 @@
 #include <php.h>
 #include "kafka.h"
 #include <php_kafka.h>
-
+#include <inttypes.h>
 #include <ctype.h>
 #include <signal.h>
 #include <string.h>
@@ -25,13 +25,13 @@
 #include <syslog.h>
 #include <sys/time.h>
 #include <errno.h>
-#include <syslog.h>
 #include <time.h>
 #include "kafka.h"
 #include "librdkafka/rdkafka.h"
 
 static int run = 1;
 static rd_kafka_t *rk;
+static rd_kafka_type_t rk_type;
 static int exit_eof = 1; //Exit consumer when last message
 char *brokers = "localhost:9092";
 int64_t start_offset = 0;
@@ -40,6 +40,14 @@ int partition = RD_KAFKA_PARTITION_UA;
 void kafka_connect(char *brokers)
 {
     kafka_setup(brokers);
+}
+
+//return 1 if rd is not NULL
+int kafka_is_connected( void )
+{
+    if (rk == NULL)
+        return 0;
+    return 1;
 }
 
 void kafka_set_partition(int partition_selected)
@@ -82,8 +90,41 @@ void kafka_destroy()
 {
     if(rk != NULL) {
         rd_kafka_destroy(rk);
-        rd_kafka_wait_destroyed(1000);
+        //this wait is blocking PHP
+        //not calling it will yield segfault, though
+        rd_kafka_wait_destroyed(5);
         rk = NULL;
+    }
+}
+
+static void kafka_init( rd_kafka_type_t type )
+{
+    if (rk_type != type) {
+        kafka_destroy();
+    }
+    if (rk == NULL)
+    {
+        char errstr[512];
+        rd_kafka_conf_t *conf = rd_kafka_conf_new();
+        if (!(rk = rd_kafka_new(type, conf, errstr, sizeof(errstr)))) {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - failed to create new producer: %s", errstr);
+            exit(1);
+        }
+        /* Add brokers */
+        if (rd_kafka_brokers_add(rk, brokers) == 0) {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "php kafka - No valid brokers specified");
+            exit(1);
+        }
+        /* Set up a message delivery report callback.
+         * It will be called once for each message, either on successful
+         * delivery to broker, or upon failure to deliver to broker. */
+        rd_kafka_conf_set_dr_cb(conf, kafka_msg_delivered);
+        rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
+
+        openlog("phpkafka", 0, LOG_USER);
+        syslog(LOG_INFO, "phpkafka - using: %s", brokers);
     }
 }
 
@@ -98,35 +139,7 @@ void kafka_produce(char* topic, char* msg, int msg_len)
 
     rd_kafka_topic_conf_t *topic_conf;
 
-    if(rk == NULL) {
-        char errstr[512];
-        rd_kafka_conf_t *conf;
-
-        /* Kafka configuration */
-        conf = rd_kafka_conf_new();
-
-        if (!(rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr)))) {
-                openlog("phpkafka", 0, LOG_USER);
-                syslog(LOG_INFO, "phpkafka - failed to create new producer: %s", errstr);
-                exit(1);
-        }
-
-        /* Add brokers */
-        if (rd_kafka_brokers_add(rk, brokers) == 0) {
-                openlog("phpkafka", 0, LOG_USER);
-                syslog(LOG_INFO, "php kafka - No valid brokers specified");
-                exit(1);
-        }
-
-        /* Set up a message delivery report callback.
-         * It will be called once for each message, either on successful
-         * delivery to broker, or upon failure to deliver to broker. */
-        rd_kafka_conf_set_dr_cb(conf, kafka_msg_delivered);
-        rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
-
-        openlog("phpkafka", 0, LOG_USER);
-        syslog(LOG_INFO, "phpkafka - using: %s", brokers);
-    }
+    kafka_init(RD_KAFKA_PRODUCER);
 
     /* Topic configuration */
     topic_conf = rd_kafka_topic_conf_new();
@@ -175,7 +188,7 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
              rkmessage->partition, rkmessage->offset);
       if (exit_eof)
         run = 0;
-      return;
+      return NULL;
     }
 
     openlog("phpkafka", 0, LOG_USER);
@@ -185,11 +198,36 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
            rkmessage->partition,
            rkmessage->offset,
            rd_kafka_message_errstr(rkmessage));
-    return;
+    return NULL;
   }
 
   //php_printf("%.*s\n", (int)rkmessage->len, (char *)rkmessage->payload);
   return rkmessage;
+}
+
+//get the available partitions for a given topic
+void kafka_get_partitions(zval *return_value, char *topic)
+{
+    rd_kafka_topic_t *rkt;
+    rd_kafka_topic_conf_t *conf;
+    int i;//C89 compliant
+    //connect if required
+    //preserve current type
+    kafka_init(RD_KAFKA_CONSUMER);
+    /* Topic configuration */
+    conf = rd_kafka_topic_conf_new();
+
+    /* Create topic */
+    rkt = rd_kafka_topic_new(rk, topic, conf);
+    //metadata API required rd_kafka_metadata_t** to be passed
+    const struct rd_kafka_metadata *meta[1];
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, meta, 200))
+    {
+        for (i=0;i<meta[0]->topics->partition_cnt;++i) {
+            add_next_index_long(return_value, i);
+        }
+        rd_kafka_metadata_destroy(meta[0]);
+    }
 }
 
 void kafka_consume(zval* return_value, char* topic, char* offset, int item_count)
@@ -210,25 +248,7 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
 
     rd_kafka_topic_t *rkt;
 
-    char errstr[512];
-    rd_kafka_conf_t *conf;
-
-    /* Kafka configuration */
-    conf = rd_kafka_conf_new();
-
-    /* Create Kafka handle */
-    if (!(rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr)))) {
-                  openlog("phpkafka", 0, LOG_USER);
-                  syslog(LOG_INFO, "phpkafka - failed to create new consumer: %s", errstr);
-                  exit(1);
-    }
-
-    /* Add brokers */
-    if (rd_kafka_brokers_add(rk, brokers) == 0) {
-            openlog("phpkafka", 0, LOG_USER);
-            syslog(LOG_INFO, "php kafka - No valid brokers specified");
-            exit(1);
-    }
+    kafka_init(RD_KAFKA_CONSUMER);
 
     rd_kafka_topic_conf_t *topic_conf;
 
@@ -239,7 +259,7 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
     rkt = rd_kafka_topic_new(rk, topic, topic_conf);
 
     openlog("phpkafka", 0, LOG_USER);
-    syslog(LOG_INFO, "phpkafka - start_offset: %d and offset passed: %d", start_offset, offset);
+    syslog(LOG_INFO, "phpkafka - start_offset: %"PRId64" and offset passed: %s", start_offset, offset);
 
     /* Start consuming */
     if (rd_kafka_consume_start(rkt, partition, start_offset) == -1) {
@@ -260,7 +280,7 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
         syslog(LOG_INFO, "phpkafka - read_counter: %d", read_counter);
         if (read_counter == -1) {
           run = 0;
-          continue;
+          continue;//so continue, or we'll get a segfault
         }
       }
 
@@ -275,10 +295,18 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
 
       rd_kafka_message_t *rkmessage_return;
       rkmessage_return = msg_consume(rkmessage, NULL);
-      char payload[(int)rkmessage_return->len];
-      sprintf(payload, "%.*s", (int)rkmessage_return->len, (char *)rkmessage_return->payload);
-      add_index_string(return_value, (int)rkmessage_return->offset, payload, 1);
-
+      if (rkmessage_return != NULL) {
+          if ((int) rkmessage_return->len > 0) {
+              //ensure there is a payload
+              char payload[(int) rkmessage_return->len];
+              sprintf(payload, "%.*s", (int) rkmessage_return->len, (char *) rkmessage_return->payload);
+              add_index_string(return_value, (int) rkmessage_return->offset, payload, 1);
+          } else {
+              //add empty value
+              char payload[1] = "";//empty string
+              add_index_string(return_value, (int) rkmessage_return->offset, payload, 1);
+          }
+      }
       /* Return message to rdkafka */
       rd_kafka_message_destroy(rkmessage);
     }
