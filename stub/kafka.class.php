@@ -23,18 +23,22 @@ final class Kafka
     /**
      * @param int $partition
      * @deprecated use setPartition instead
+     * @return $this
      */
     public function set_partition($partition)
     {
         $this->partition = $partition;
+        return $this;
     }
 
     /**
      * @param int $partition
+     * @return $this
      */
     public function setPartition($partition)
     {
         $this->partition = $partition;
+        return $this;
     }
 
     /**
@@ -49,16 +53,13 @@ final class Kafka
      * produce message on topic
      * @param string $topic
      * @param string $message
-     * @return bool|int
+     * @return $this
      */ 
     public function produce($topic, $message)
     {
         $this->connected = true;
         //internal call, produce message on topic
-        if ($this->partition < 0) {
-            return false;//produce failed
-        }
-        return $this->partition;
+        return $this;
     }
 
     /**
@@ -85,6 +86,16 @@ final class Kafka
             range($start, $start + $count),
             'the message at the offset $key'
         );
+    }
+
+    /**
+     * Returns an array of ints (available partitions for topic)
+     * @param string $topic
+     * @return array
+     */
+    public function getPartitionsForTopic($topic)
+    {
+        return [];
     }
 
     public function __destruct()
