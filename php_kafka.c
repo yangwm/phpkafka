@@ -126,7 +126,7 @@ PHP_METHOD(Kafka, __destruct)
 }
 /* }}} end Kafka::__destruct */
 
-/* {{{ proto void Kafka::set_partition( int $partition );
+/* {{{ proto Kafka Kafka::set_partition( int $partition );
     Set partition (used by consume method)
     This method is deprecated, in favour of the more PSR-compliant
     Kafka::setPartition
@@ -146,10 +146,11 @@ PHP_METHOD(Kafka, set_partition)
     kafka_set_partition(Z_LVAL_P(partition));
     //update partition property, so we can check to see if it's set when consuming
     zend_update_property(kafka_ce, getThis(), "partition", sizeof("partition") -1, partition TSRMLS_CC);
+    RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::set_partition */
 
-/* {{{ proto void Kafka::setPartition( int $partition );
+/* {{{ proto Kafka Kafka::setPartition( int $partition );
     Set partition to use for Kafka::consume calls
 */
 PHP_METHOD(Kafka, setPartition)
@@ -166,6 +167,8 @@ PHP_METHOD(Kafka, setPartition)
     }
     kafka_set_partition(Z_LVAL_P(partition));
     zend_update_property(kafka_ce, getThis(), "partition", sizeof("partition") -1, partition TSRMLS_CC);
+    //return $this
+    RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::setPartition */
 
@@ -199,7 +202,7 @@ PHP_METHOD(Kafka, disconnect)
 }
 /* }}} end Kafka::disconnect */
 
-/* {{{ proto void Kafka::produce( string $topic, string $message);
+/* {{{ proto Kafka Kafka::produce( string $topic, string $message);
     Produce a message, returns int (partition used to produce)
     or false if something went wrong
 */
@@ -219,6 +222,7 @@ PHP_METHOD(Kafka, produce)
     }
 
     kafka_produce(topic, msg, msg_len);
+    RETURN_ZVAL(object, 1, 0);
 }
 /* }}} end Kafka::produce */
 
@@ -259,9 +263,5 @@ PHP_METHOD(Kafka, consume)
 
     array_init(return_value);
     kafka_consume(return_value, topic, offset, count);
-
-    if(return_value == NULL) {
-        RETURN_FALSE;
-    }
 }
 /* }}} end Kafka::consume */
