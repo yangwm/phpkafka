@@ -38,6 +38,7 @@ static PHP_METHOD(Kafka, set_partition);
 static PHP_METHOD(Kafka, setPartition);
 static PHP_METHOD(Kafka, getPartitionsForTopic);
 static PHP_METHOD(Kafka, isConnected);
+static PHP_METHOD(Kafka, setBrokers);
 static PHP_METHOD(Kafka, disconnect);
 static PHP_METHOD(Kafka, produce);
 static PHP_METHOD(Kafka, consume);

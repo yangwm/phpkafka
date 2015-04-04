@@ -34,6 +34,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, set_partition, NULL, ZEND_ACC_PUBLIC|ZEND_ACC_DEPRECATED)
     PHP_ME(Kafka, setPartition, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartitionsForTopic, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setBrokers, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, disconnect, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, isConnected, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, produce, NULL, ZEND_ACC_PUBLIC)
@@ -136,7 +137,7 @@ PHP_METHOD(Kafka, set_partition)
     zval *partition;
 
     if (
-            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z", &partition) == FAILURE
+            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &partition) == FAILURE
         ||
             Z_TYPE_P(partition) != IS_LONG
     ) {
@@ -158,7 +159,7 @@ PHP_METHOD(Kafka, setPartition)
     zval *partition;
 
     if (
-            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z", &partition) == FAILURE
+            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &partition) == FAILURE
         ||
             Z_TYPE_P(partition) != IS_LONG
     ) {
@@ -171,6 +172,27 @@ PHP_METHOD(Kafka, setPartition)
     RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::setPartition */
+
+/* {{{ proto Kafka Kafka::setBrokers ( string $brokers)
+    Set brokers on-the-fly
+*/
+PHP_METHOD(Kafka, setBrokers)
+{
+    zval *brokers;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z",
+            &brokers) == FAILURE) {
+        return;
+    }
+    if (Z_TYPE_P(brokers) != IS_STRING) {
+        zend_throw_exception(BASE_EXCEPTION, "Kafka::setBrokers expects argument to be a string", 0 TSRMLS_CC);
+        return;
+    }
+    kafka_destroy();
+    kafka_connect(Z_STRVAL_P(brokers));
+    RETURN_ZVAL(getThis(), 1, 0);
+}
+/* }}} end Kafka::setBrokers */
 
 /* {{{ proto array Kafka::getPartitionsForTopic( string $topic )
     Get an array of available partitions for a given topic
