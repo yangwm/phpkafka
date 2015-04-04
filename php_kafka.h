@@ -20,6 +20,8 @@
 #define PHP_KAFKA_EXTNAME "kafka"
 #define PHP_KAFKA_OFFSET_BEGIN "beginning"
 #define PHP_KAFKA_OFFSET_END "end"
+#define PHP_KAFKA_LOGLEVEL_ON 1
+#define PHP_KAFKA_LOGLEVEL_OFF 0
 extern zend_module_entry kafka_module_entry;
 
 PHP_MSHUTDOWN_FUNCTION(kafka);
@@ -36,6 +38,7 @@ static PHP_METHOD(Kafka, __construct);
 static PHP_METHOD(Kafka, __destruct);
 static PHP_METHOD(Kafka, set_partition);
 static PHP_METHOD(Kafka, setPartition);
+static PHP_METHOD(Kafka, setLogLevel);
 static PHP_METHOD(Kafka, getPartitionsForTopic);
 static PHP_METHOD(Kafka, isConnected);
 static PHP_METHOD(Kafka, setBrokers);
