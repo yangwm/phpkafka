@@ -178,15 +178,15 @@ void kafka_produce(char* topic, char* msg, int msg_len)
                rd_kafka_err2str(
                rd_kafka_errno2err(errno)));
         }
-        rd_kafka_poll(rk, 0);
+        rd_kafka_poll(rk, 1);
     }
 
     /* Poll to handle delivery reports */
-    rd_kafka_poll(rk, 0);
+    rd_kafka_poll(rk, 1);
 
     /* Wait for messages to be delivered */
     while (run && rd_kafka_outq_len(rk) > 0)
-      rd_kafka_poll(rk, 100);
+      rd_kafka_poll(rk, 10);
 
     rd_kafka_topic_destroy(rkt);
 }
