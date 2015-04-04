@@ -205,6 +205,24 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
   return rkmessage;
 }
 
+//get topics + partition count
+void kafka_get_topics(zval *return_value)
+{
+    int i;
+    const struct rd_kafka_metadata *meta;
+    kafka_init(RD_KAFKA_CONSUMER);
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 1, NULL, &meta, 200)) {
+        for (i=0;i<meta->topic_cnt;++i) {
+            add_assoc_long(
+               return_value,
+               meta->topics[i].topic,
+               (long) meta->topics[i].partition_cnt
+            );
+        }
+    }
+    rd_kafka_metadata_destroy(meta);
+}
+
 //get the available partitions for a given topic
 void kafka_get_partitions(zval *return_value, char *topic)
 {
@@ -225,8 +243,8 @@ void kafka_get_partitions(zval *return_value, char *topic)
         for (i=0;i<meta[0]->topics->partition_cnt;++i) {
             add_next_index_long(return_value, i);
         }
-        rd_kafka_metadata_destroy(meta[0]);
     }
+    rd_kafka_metadata_destroy(meta[0]);
 }
 
 void kafka_consume(zval* return_value, char* topic, char* offset, int item_count)

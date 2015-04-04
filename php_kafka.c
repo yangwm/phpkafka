@@ -35,6 +35,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, setPartition, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartitionsForTopic, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, setBrokers, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getTopics, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, disconnect, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, isConnected, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, produce, NULL, ZEND_ACC_PUBLIC)
@@ -58,7 +59,6 @@ zend_module_entry kafka_module_entry = {
 #ifdef COMPILE_DL_KAFKA
 ZEND_GET_MODULE(kafka)
 #endif
-
 #define REGISTER_KAFKA_CLASS_CONST_STRING(ce, name, value) \
     zend_declare_class_constant_stringl(ce, name, sizeof(name)-1, value, sizeof(value)-1)
 
@@ -172,6 +172,16 @@ PHP_METHOD(Kafka, setPartition)
     RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::setPartition */
+
+/* {{{ proto array Kafka::getTopics( void )
+    Get all existing topics
+*/
+PHP_METHOD(Kafka, getTopics)
+{
+    array_init(return_value);
+    kafka_get_topics(return_value);
+}
+/* }}} end Kafka::getTopics */
 
 /* {{{ proto Kafka Kafka::setBrokers ( string $brokers)
     Set brokers on-the-fly
