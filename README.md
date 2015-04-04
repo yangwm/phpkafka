@@ -1,3 +1,16 @@
+## MAin dev-branch is here!
+
+This is, currently, the main development branch for this fork. To build the extension, nothing much has changed.
+However, this extension now relies on the meta API of librdkafka. Given that some systems have packaged this lib, it is important to ensure that your package is up-to-date.
+
+If you are running a debian-based system, and have installed the `librdkafka1` or `librdkafka-dev` package, you will need to purge it, clone the `librdkafka` repo, compile and install it yourself. This extension requires librdkafka version 0.8.6 (check `RD_KAFKA_VERSION`, it should be defined as `0x00080600`).
+
+As this is (AFAIK) the only PHP extension currently being developed, I welcome all contributions.
+
+### Future plans
+
+If this extension reaches something resembling an alpha-state, I'd like to start work on PHP7 support. If anyone with any experience with the new Zend API, _and_ is interested to contribute, just let me know and I'd be happy to make you a collaborator.
+
 phpkafka
 ========
 
