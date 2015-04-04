@@ -4,6 +4,8 @@ final class Kafka
 {
     const OFFSET_BEGIN = 'beginning';
     const OFFSET_END = 'end';
+    const LOG_ON = 1;
+    const LOG_OFF = 0;
 
     /**
      * This property does not exist, connection status
@@ -18,7 +20,7 @@ final class Kafka
     private $partition = 0;
 
     public function __construct($brokers = 'localhost:9092')
-    {};
+    {}
 
     /**
      * @param int $partition
@@ -34,10 +36,67 @@ final class Kafka
     /**
      * @param int $partition
      * @return $this
+     * @throws \Exception
      */
     public function setPartition($partition)
     {
+        if (!is_int($partition)) {
+            throw new \Exception(
+                sprintf(
+                    '%s expects argument to be an int',
+                    __CLASS__
+                )
+            );
+        }
         $this->partition = $partition;
+        return $this;
+    }
+
+    /**
+     * @param int $level
+     * @return $this
+     * @throws \Exception (invalid argument)
+     */
+    public function setLogLevel($level)
+    {
+        if (!is_int($level)) {
+            throw new Exception(
+                sprintf(
+                    '%s expects argument to be an int',
+                    __METHOD__
+                )
+            );
+        }
+        if ($level != self::LOG_ON && $level != self::LOG_OFF) {
+            throw new Exception(
+                sprintf(
+                    '%s argument invalid, use %s::LOG_* constants',
+                    __METHOD__,
+                    __CLASS__
+                )
+            );
+        }
+        //level is passed to kafka backend
+        return $this;
+    }
+
+    /**
+     * @param string $brokers
+     * @return $this
+     * @throws \Exception
+     */
+    public function setBrokers($brokers)
+    {
+        if (!is_string($brokers)) {
+            throw new \Exception(
+                sprintf(
+                    '%s expects argument to be a string',
+                    __CLASS__
+                )
+            );
+        }
+        $this->brokers = $brokers;
+        return $this;
     }
 
     /**
@@ -85,6 +144,37 @@ final class Kafka
             range($start, $start + $count),
             'the message at the offset $key'
         );
+    }
+
+    /**
+     * Returns an assoc array of topic names
+     * The value is the partition count
+     * @return array
+     */
+    public function getTopics()
+    {
+        return [
+            'topicName' => 1
+        ];
+    }
+
+    /**
+     * @return bool
+     */
+    public function disconnect()
+    {
+        $this->connected = false;
+        return true;
+    }
+
+    /**
+     * Returns an array of ints (available partitions for topic)
+     * @param string $topic
+     * @return array
+     */
+    public function getPartitionsForTopic($topic)
+    {
+        return [];
     }
 
     public function __destruct()

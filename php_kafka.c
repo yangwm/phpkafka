@@ -33,7 +33,10 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, __destruct, NULL, ZEND_ACC_DTOR | ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, set_partition, NULL, ZEND_ACC_PUBLIC|ZEND_ACC_DEPRECATED)
     PHP_ME(Kafka, setPartition, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setLogLevel, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartitionsForTopic, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setBrokers, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getTopics, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, disconnect, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, isConnected, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, produce, NULL, ZEND_ACC_PUBLIC)
@@ -57,9 +60,10 @@ zend_module_entry kafka_module_entry = {
 #ifdef COMPILE_DL_KAFKA
 ZEND_GET_MODULE(kafka)
 #endif
-
 #define REGISTER_KAFKA_CLASS_CONST_STRING(ce, name, value) \
     zend_declare_class_constant_stringl(ce, name, sizeof(name)-1, value, sizeof(value)-1)
+#define REGISTER_KAFKA_CLASS_CONST_LONG(ce, name, value) \
+    zend_declare_class_constant_long(ce, name, sizeof(name)-1, value)
 
 #ifndef BASE_EXCEPTION
 #if (PHP_MAJOR_VERSION < 5) || ( ( PHP_MAJOR_VERSION == 5 ) && (PHP_MINOR_VERSION < 2) )
@@ -79,6 +83,8 @@ PHP_MINIT_FUNCTION(kafka)
     zend_declare_property_null(kafka_ce, "partition", sizeof("partition") -1, ZEND_ACC_PRIVATE TSRMLS_CC);
     REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_BEGIN", PHP_KAFKA_OFFSET_BEGIN);
     REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_END", PHP_KAFKA_OFFSET_END);
+    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_ON", PHP_KAFKA_LOGLEVEL_ON);
+    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_OFF", PHP_KAFKA_LOGLEVEL_OFF);
     return SUCCESS;
 }
 PHP_RSHUTDOWN_FUNCTION(kafka) { return SUCCESS; }
@@ -136,7 +142,7 @@ PHP_METHOD(Kafka, set_partition)
     zval *partition;
 
     if (
-            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z", &partition) == FAILURE
+            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &partition) == FAILURE
         ||
             Z_TYPE_P(partition) != IS_LONG
     ) {
@@ -150,6 +156,33 @@ PHP_METHOD(Kafka, set_partition)
 }
 /* }}} end Kafka::set_partition */
 
+/* {{{ proto Kafka Kafka::setLogLevel( mixed $logLevel )
+    toggle syslogging on or off use Kafka::LOG_* constants
+*/
+PHP_METHOD(Kafka, setLogLevel)
+{
+    zval *log_level;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &log_level) == FAILURE)
+    {
+        return;//?
+    }
+    if (Z_TYPE_P(log_level) != IS_LONG) {
+        zend_throw_exception(BASE_EXCEPTION, "Kafka::setLogLevel expects argument to be an int", 0 TSRMLS_CC);
+        return;
+    }
+    if (
+        Z_LVAL_P(log_level) != PHP_KAFKA_LOGLEVEL_ON
+        &&
+        Z_LVAL_P(log_level) != PHP_KAFKA_LOGLEVEL_OFF
+    ) {
+        zend_throw_exception(BASE_EXCEPTION, "Invalid argument, use Kafka::LOG_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    kafka_set_log_level(Z_LVAL_P(log_level));
+    RETURN_ZVAL(getThis(), 1, 0);
+}
+/* }}} end Kafka::setLogLevel */
+
 /* {{{ proto Kafka Kafka::setPartition( int $partition );
     Set partition to use for Kafka::consume calls
 */
@@ -158,7 +191,7 @@ PHP_METHOD(Kafka, setPartition)
     zval *partition;
 
     if (
-            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z", &partition) == FAILURE
+            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &partition) == FAILURE
         ||
             Z_TYPE_P(partition) != IS_LONG
     ) {
@@ -171,6 +204,37 @@ PHP_METHOD(Kafka, setPartition)
     RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::setPartition */
+
+/* {{{ proto array Kafka::getTopics( void )
+    Get all existing topics
+*/
+PHP_METHOD(Kafka, getTopics)
+{
+    array_init(return_value);
+    kafka_get_topics(return_value);
+}
+/* }}} end Kafka::getTopics */
+
+/* {{{ proto Kafka Kafka::setBrokers ( string $brokers)
+    Set brokers on-the-fly
+*/
+PHP_METHOD(Kafka, setBrokers)
+{
+    zval *brokers;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z",
+            &brokers) == FAILURE) {
+        return;
+    }
+    if (Z_TYPE_P(brokers) != IS_STRING) {
+        zend_throw_exception(BASE_EXCEPTION, "Kafka::setBrokers expects argument to be a string", 0 TSRMLS_CC);
+        return;
+    }
+    kafka_destroy();
+    kafka_connect(Z_STRVAL_P(brokers));
+    RETURN_ZVAL(getThis(), 1, 0);
+}
+/* }}} end Kafka::setBrokers */
 
 /* {{{ proto array Kafka::getPartitionsForTopic( string $topic )
     Get an array of available partitions for a given topic
