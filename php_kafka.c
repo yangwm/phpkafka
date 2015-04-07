@@ -35,6 +35,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, setPartition, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, setLogLevel, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartitionsForTopic, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getPartitionOffsets, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, setBrokers, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getTopics, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, disconnect, NULL, ZEND_ACC_PUBLIC)
@@ -251,6 +252,36 @@ PHP_METHOD(Kafka, getPartitionsForTopic)
     kafka_get_partitions(return_value, topic);
 }
 /* }}} end Kafka::getPartitionsForTopic */
+
+/* {{{ proto Kafka::getPartitionOffsets( string $topic )
+ * Get an array containing all partitions and their respective first offsets
+ */
+PHP_METHOD(Kafka, getPartitionOffsets)
+{
+    char *topic = NULL;
+    int topic_len = 0,
+        kafka_r;
+    int *offsets = NULL,
+        i;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s",
+            &topic, &topic_len) == FAILURE) {
+        return;
+    }
+    kafka_r = kafka_partition_offsets(&offsets, topic);
+    if (kafka_r < 1) {
+        const char *msg = kafka_r == 1 ? "Failed to get metadata" : "unknown partition count (or mem-error)";
+        zend_throw_exception(
+            BASE_EXCEPTION,
+            msg,
+            0 TSRMLS_CC
+        );
+    }
+    array_init(return_value);
+    for (i=0;i<kafka_r;++i) {
+        add_index_long(return_value,i, offsets[i]);
+    }
+    free(offsets);//kafka allocates this bit, free outside of zend
+} /* }}} end Kafka::getPartitionOffsets */
 
 /* {{{ proto bool Kafka::disconnect( void );
     Disconnects kafka, returns false if disconnect failed
