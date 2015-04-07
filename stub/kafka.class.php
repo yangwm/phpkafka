@@ -177,6 +177,19 @@ final class Kafka
         return [];
     }
 
+    /**
+     * Returns an array where keys are partition
+     * values are their respective beginning offsets
+     * if a partition has offset -1, the consume call failed
+     * @param string $topic
+     * @return array
+     * @throws \Exception when meta call failed or no partitions available
+     */
+    public function getPartitionOffsets($topic)
+    {
+        return [];
+    }
+
     public function __destruct()
     {
         $this->connected = false;
