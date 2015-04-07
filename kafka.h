@@ -24,6 +24,7 @@ void kafka_produce(char* topic, char* msg, int msg_len);
 int kafka_is_connected( void );
 void kafka_consume(zval* return_value, char* topic, char* offset, int item_count);
 void kafka_get_partitions(zval *return_value, char *topic);
+int kafka_partition_offsets(int **partitions, const char *topic);
 void kafka_get_topics(zval *return_value);
 void kafka_destroy();
 

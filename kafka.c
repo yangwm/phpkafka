@@ -61,14 +61,16 @@ void kafka_set_partition(int partition_selected)
     partition = partition_selected;
 }
 
-void kafka_stop(int sig) {
+void kafka_stop(int sig)
+{
     run = 0;
     fclose(stdin); /* abort fgets() */
     rd_kafka_destroy(rk);
     rk = NULL;
 }
 
-void kafka_err_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque) {
+void kafka_err_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque)
+{
     if (log_level) {
         openlog("phpkafka", 0, LOG_USER);
         syslog(LOG_INFO, "phpkafka - ERROR CALLBACK: %s: %s: %s\n",
@@ -80,7 +82,8 @@ void kafka_err_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque) {
 void kafka_msg_delivered (rd_kafka_t *rk,
                            void *payload, size_t len,
                            int error_code,
-                           void *opaque, void *msg_opaque) {
+                           void *opaque, void *msg_opaque)
+{
     if (error_code && log_level) {
         openlog("phpkafka", 0, LOG_USER);
         syslog(LOG_INFO, "phpkafka - Message delivery failed: %s",
@@ -192,7 +195,8 @@ void kafka_produce(char* topic, char* msg, int msg_len)
 }
 
 static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
-       void *opaque) {
+       void *opaque)
+{
     if (rkmessage->err) {
         if (rkmessage->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) {
             if (log_level) {
@@ -227,7 +231,7 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
 void kafka_get_topics(zval *return_value)
 {
     int i;
-    const struct rd_kafka_metadata *meta;
+    const struct rd_kafka_metadata *meta = NULL;
     kafka_init(RD_KAFKA_CONSUMER);
     if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 1, NULL, &meta, 200)) {
         for (i=0;i<meta->topic_cnt;++i) {
@@ -238,11 +242,13 @@ void kafka_get_topics(zval *return_value)
             );
         }
     }
-    rd_kafka_metadata_destroy(meta);
+    if (meta) {
+        rd_kafka_metadata_destroy(meta);
+    }
 }
 
-//get the available partitions for a given topic
-void kafka_get_partitions(zval *return_value, char *topic)
+static
+int kafka_partition_count(const char *topic)
 {
     rd_kafka_topic_t *rkt;
     rd_kafka_topic_conf_t *conf;
@@ -255,14 +261,83 @@ void kafka_get_partitions(zval *return_value, char *topic)
     /* Create topic */
     rkt = rd_kafka_topic_new(rk, topic, conf);
     //metadata API required rd_kafka_metadata_t** to be passed
-    const struct rd_kafka_metadata *meta[1];
-    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, meta, 200))
-    {
-        for (i=0;i<meta[0]->topics->partition_cnt;++i) {
-            add_next_index_long(return_value, i);
-        }
+    const struct rd_kafka_metadata *meta = NULL;
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, &meta, 200))
+        i = (int) meta->topics->partition_cnt;
+    else
+        i = 0;
+    if (meta) {
+        rd_kafka_metadata_destroy(meta);
     }
-    rd_kafka_metadata_destroy(meta[0]);
+    return i;
+}
+
+//get the available partitions for a given topic
+void kafka_get_partitions(zval *return_value, char *topic)
+{
+    int i, count = kafka_partition_count(topic);
+    for (i=0;i<count;++i) {
+        add_next_index_long(return_value, i);
+    }
+}
+
+/**
+ * @brief Get all partitions for topic and their beginning offsets, useful
+ * if we're consuming messages without knowing the actual partition beforehand
+ * @param int **partitions should be pointer to NULL, will be allocated here
+ * @param const char * topic topic name
+ * @return int (0 == success, all others indicate failure)
+ */
+int kafka_partition_offsets(int **partitions, const char *topic)
+{
+    rd_kafka_topic_t *rkt;
+    rd_kafka_topic_conf_t *conf;
+    int i = 0;
+    //connect as consumer if required
+    kafka_init(RD_KAFKA_CONSUMER);
+    /* Topic configuration */
+    conf = rd_kafka_topic_conf_new();
+
+    /* Create topic */
+    rkt = rd_kafka_topic_new(rk, topic, conf);
+    const struct rd_kafka_metadata *meta = NULL;
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, &meta, 200))
+    {
+        *partitions = realloc(*partitions, meta->topics->partition_cnt * sizeof **partitions);
+        if (*partitions == NULL) {
+            //free metadata, return error
+            rd_kafka_metadata_destroy(meta);
+            return -1;
+        }
+        for (i;i<meta->topics->partition_cnt;++i) {
+            //consume_start returns 0 on success
+            if (rd_kafka_consume_start(rkt, i, RD_KAFKA_OFFSET_END))
+                continue;
+            rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 1000),
+                    *rkmessage_return;
+
+            if (!rkmessage) /* timeout */
+              continue;
+
+            rkmessage_return = msg_consume(rkmessage, NULL);
+            if (rkmessage_return != NULL) {
+                *partitions[i] = (int) rkmessage_return->offset;
+            } else {
+                //error consuming message, but partition is set
+                //less reliable, but check offset member anyway
+                if (rkmessage && rkmessage->partition == i) {
+                    *partitions[i] = (int) rkmessage->offset;
+                } else {
+                    //set -1 -> error!
+                    *partitions[i] = 0;
+                }
+            }
+            rd_kafka_message_destroy(rkmessage);
+        }
+        i = meta->topics->partition_cnt;
+    }
+    rd_kafka_metadata_destroy(meta);
+    return i;
 }
 
 void kafka_consume(zval* return_value, char* topic, char* offset, int item_count)
@@ -280,7 +355,6 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
     else
       start_offset = strtoll(offset, NULL, 10);
   }
-
     rd_kafka_topic_t *rkt;
 
     kafka_init(RD_KAFKA_CONSUMER);
