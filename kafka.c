@@ -342,7 +342,8 @@ int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
 {
     rd_kafka_topic_t *rkt;
     rd_kafka_topic_conf_t *conf;
-    int i = 0;
+    int i = 0,
+        *values = *partitions;
     //connect as consumer if required
     if (r == NULL)
     {
@@ -357,15 +358,16 @@ int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
     const struct rd_kafka_metadata *meta = NULL;
     if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 0, rkt, &meta, 200))
     {
-        *partitions = realloc(*partitions, meta->topics->partition_cnt * sizeof **partitions);
-        if (*partitions == NULL) {
+        values = realloc(values, meta->topics->partition_cnt * sizeof *values);
+        if (values == NULL) {
+            *partitions = values;//possible corrupted pointer now
             //free metadata, return error
             rd_kafka_metadata_destroy(meta);
             return -1;
         }
         for (i;i<meta->topics->partition_cnt;++i) {
             //consume_start returns 0 on success
-            if (rd_kafka_consume_start(rkt, i, RD_KAFKA_OFFSET_END))
+            if (rd_kafka_consume_start(rkt, i, RD_KAFKA_OFFSET_BEGINNING))
                 continue;
             rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 1000),
                     *rkmessage_return;
@@ -375,19 +377,23 @@ int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
 
             rkmessage_return = msg_consume(rkmessage, NULL);
             if (rkmessage_return != NULL) {
-                *partitions[i] = (int) rkmessage_return->offset;
+                values[i] = (int) rkmessage->offset;
             } else {
                 //error consuming message, but partition is set
-                //less reliable, but check offset member anyway
-                if (rkmessage && rkmessage->partition == i) {
-                    *partitions[i] = (int) rkmessage->offset;
+                //Not very reliable, but something...
+                if (rkmessage->partition == i) {
+                    if (rkmessage->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+                        values[i] = -1;
+                    else
+                        values[i] = (int) rkmessage->offset;
                 } else {
                     //set -1 -> error!
-                    *partitions[i] = 0;
+                    values[i] = -1;
                 }
             }
             rd_kafka_message_destroy(rkmessage);
         }
+        *partitions = values;
         i = meta->topics->partition_cnt;
     }
     rd_kafka_metadata_destroy(meta);
