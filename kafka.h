@@ -28,6 +28,7 @@ void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset,
 void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic);
 int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic);
 void kafka_get_topics(rd_kafka_t *r,zval *return_value);
+void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, const char *offset, int item_count);
 void kafka_destroy(rd_kafka_t *r, int timeout);
 
 #endif
