@@ -6,6 +6,8 @@ final class Kafka
     const OFFSET_END = 'end';
     const LOG_ON = 1;
     const LOG_OFF = 0;
+    const MODE_CONSUMER = 0;
+    const MODE_PRODUCER = 1;
 
     /**
      * This property does not exist, connection status
@@ -18,6 +20,12 @@ final class Kafka
      * @var int
      */
     private $partition = 0;
+
+    /**
+     * Not an actual property, but last active mode is tracked
+     * @var int
+     */
+    private $lastMode = 0;
 
     public function __construct($brokers = 'localhost:9092')
     {}
@@ -100,10 +108,24 @@ final class Kafka
     }
 
     /**
+     *
+     * @oaran int|null $mode
      * @return bool
      */
-    public function isConnected()
+    public function isConnected($mode = null)
     {
+        if ($mode == null) {
+            $mode = $this->lastMode;
+        }
+        if ($mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
+            throw new \Exception(
+                sprintf(
+                    'invalid argument passed to %s, use Kafka::MODE_* constants',
+                    __METHOD__
+                )
+            );
+        }
+        //connection pointers determine connected status
         return $this->connected;
     }
 
@@ -159,10 +181,20 @@ final class Kafka
     }
 
     /**
+     * Disconnect a specific connection (producer/consumer) or both
+     * @param int|null $mode
      * @return bool
      */
-    public function disconnect()
+    public function disconnect($mode = null)
     {
+        if ($mode !== null && $mode != self::MODE_PRODUCER && $mode != self::MODE_CONSUMER) {
+            throw new \Exception(
+                sprintf(
+                    'invalid argument passed to %s, use Kafka::MODE_* constants',
+                    __METHOD__
+                )
+            );
+        }
         $this->connected = false;
         return true;
     }
