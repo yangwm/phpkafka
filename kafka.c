@@ -367,6 +367,7 @@ int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
         }
         for (i;i<meta->topics->partition_cnt;++i) {
             //consume_start returns 0 on success
+            values[i] = -1;//initialize memory
             if (rd_kafka_consume_start(rkt, i, RD_KAFKA_OFFSET_BEGINNING))
                 continue;
             rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 1000),
@@ -382,13 +383,8 @@ int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
                 //error consuming message, but partition is set
                 //Not very reliable, but something...
                 if (rkmessage->partition == i) {
-                    if (rkmessage->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
-                        values[i] = -1;
-                    else
+                    if (rkmessage->err != RD_KAFKA_RESP_ERR__PARTITION_EOF)
                         values[i] = (int) rkmessage->offset;
-                } else {
-                    //set -1 -> error!
-                    values[i] = -1;
                 }
             }
             rd_kafka_message_destroy(rkmessage);
