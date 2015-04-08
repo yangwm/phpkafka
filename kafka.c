@@ -130,7 +130,7 @@ void kafka_setup(char* brokers_list)
     brokers = brokers_list;
 }
 
-void kafka_destroy(rd_kafka_t *r)
+void kafka_destroy(rd_kafka_t *r, int timeout)
 {
     if (r == NULL || (void *)r == (void *)rk)
     {//NULL passed, or r == global pointer variable
@@ -141,7 +141,7 @@ void kafka_destroy(rd_kafka_t *r)
         rd_kafka_destroy(r);
         //this wait is blocking PHP
         //not calling it will yield segfault, though
-        rd_kafka_wait_destroyed(5);
+        rd_kafka_wait_destroyed(timeout);
         r = NULL;
     }
 }
@@ -149,7 +149,7 @@ void kafka_destroy(rd_kafka_t *r)
 static void kafka_init( rd_kafka_type_t type )
 {
     if (rk_type != type) {
-        kafka_destroy(NULL);
+        kafka_destroy(NULL, 1);
     }
     if (rk == NULL)
     {
@@ -338,12 +338,13 @@ void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic)
  * @param const char * topic topic name
  * @return int (0 == success, all others indicate failure)
  */
-int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
+int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
 {
     rd_kafka_topic_t *rkt;
     rd_kafka_topic_conf_t *conf;
-    int i = 0,
-        *values = *partitions;
+    int i = 0;
+    //make life easier, 1 level of indirection...
+    long *values = *partitions;
     //connect as consumer if required
     if (r == NULL)
     {
@@ -356,7 +357,7 @@ int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
     /* Create topic */
     rkt = rd_kafka_topic_new(r, topic, conf);
     const struct rd_kafka_metadata *meta = NULL;
-    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 0, rkt, &meta, 200))
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 0, rkt, &meta, 5))
     {
         values = realloc(values, meta->topics->partition_cnt * sizeof *values);
         if (values == NULL) {
@@ -370,7 +371,7 @@ int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
             values[i] = -1;//initialize memory
             if (rd_kafka_consume_start(rkt, i, RD_KAFKA_OFFSET_BEGINNING))
                 continue;
-            rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 1000),
+            rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 5),
                     *rkmessage_return;
 
             if (!rkmessage) /* timeout */

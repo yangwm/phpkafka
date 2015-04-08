@@ -145,11 +145,13 @@ void free_kafka_connection(void *object TSRMLS_DC)
         efree(connection->brokers);
     if (connection->consumer != NULL)
         kafka_destroy(
-            connection->consumer
+            connection->consumer,
+            1
         );
     if (connection->producer != NULL)
         kafka_destroy(
-            connection->producer
+            connection->producer,
+            1
         );
     efree(connection);
 }
@@ -236,11 +238,13 @@ PHP_METHOD(Kafka, __destruct)
         efree(connection->brokers);
     if (connection->consumer != NULL)
         kafka_destroy(
-            connection->consumer
+            connection->consumer,
+            10
         );
     if (connection->producer != NULL)
         kafka_destroy(
-            connection->producer
+            connection->producer,
+            10
         );
     connection->producer    = NULL;
     connection->brokers     = NULL;
@@ -363,9 +367,9 @@ PHP_METHOD(Kafka, setBrokers)
         return;
     }
     if (connection->consumer)
-        kafka_destroy(connection->consumer);
+        kafka_destroy(connection->consumer, 1);
     if (connection->producer)
-        kafka_destroy(connection->producer);
+        kafka_destroy(connection->producer, 1);
     if (connection->brokers)
     {//previous connections are possible
         efree(connection->brokers);
@@ -413,7 +417,7 @@ PHP_METHOD(Kafka, getPartitionOffsets)
     char *topic = NULL;
     int topic_len = 0,
         kafka_r;
-    int *offsets = NULL,
+    long *offsets = NULL,
         i;
     kafka_connection *connection = (kafka_connection *) zend_object_store_get_object(
         getThis() TSRMLS_CC
@@ -477,21 +481,21 @@ PHP_METHOD(Kafka, disconnect)
         if (type == PHP_KAFKA_MODE_CONSUMER)
         {//disconnect consumer
             if (connection->consumer)
-                kafka_destroy(connection->consumer);
+                kafka_destroy(connection->consumer, 1);
             connection->consumer = NULL;
         }
         else
         {
             if (connection->producer)
-                kafka_destroy(connection->producer);
+                kafka_destroy(connection->producer, 1);
             connection->producer = NULL;
         }
         RETURN_TRUE;
     }
     if (connection->consumer)
-        kafka_destroy(connection->consumer);
+        kafka_destroy(connection->consumer, 1);
     if (connection->producer)
-        kafka_destroy(connection->producer);
+        kafka_destroy(connection->producer, 1);
     connection->producer = connection->consumer = NULL;
     if (kafka_is_connected()) {
         RETURN_FALSE;
