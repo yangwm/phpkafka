@@ -22,6 +22,9 @@
 #define PHP_KAFKA_OFFSET_END "end"
 #define PHP_KAFKA_LOGLEVEL_ON 1
 #define PHP_KAFKA_LOGLEVEL_OFF 0
+#define PHP_KAFKA_MODE_CONSUMER 0
+#define PHP_KAFKA_MODE_PRODUCER 1
+
 extern zend_module_entry kafka_module_entry;
 
 PHP_MSHUTDOWN_FUNCTION(kafka);
@@ -32,6 +35,20 @@ PHP_RSHUTDOWN_FUNCTION(kafka);
 #ifdef ZTS
 #include <TSRM.h>
 #endif
+#include "librdkafka/rdkafka.h"
+
+typedef struct _kafka_r {
+    zend_object         std;
+    rd_kafka_t          *consumer;
+    rd_kafka_t          *producer;
+    char                *brokers;
+    long                partition;
+    rd_kafka_type_t     rk_type;
+} kafka_connection;
+
+//attach kafka connection to module
+zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC);
+void free_kafka_connection(void *object TSRMLS_DC);
 
 /* Kafka class */
 static PHP_METHOD(Kafka, __construct);

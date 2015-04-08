@@ -31,3 +31,7 @@ run-tests.php
 autom4te.cache
 nbproject/
 .project
+CMake*
+main.c
+*.cbp
+*.cmake
