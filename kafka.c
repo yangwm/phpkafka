@@ -29,6 +29,13 @@
 #include "kafka.h"
 #include "librdkafka/rdkafka.h"
 
+struct consume_cb_params {
+    int read_count;
+    zval *return_value;
+    int partition_ends;
+    int error_count;
+};
+
 static int run = 1;
 static int log_level = 1;
 static rd_kafka_t *rk;
@@ -236,6 +243,62 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
     rd_kafka_topic_destroy(rkt);
 }
 
+static
+void queue_consume(rd_kafka_message_t *message, void *opaque)
+{
+    struct consume_cb_params *params = opaque;
+    zval *return_value = params->return_value;
+    //all partitions EOF
+    if (params->partition_ends < 1)
+        return;
+    //nothing more to read...
+    if (params->read_count == 0)
+        return;
+    params->read_count -= 1;
+    if (message->err)
+    {
+        params->error_count += 1;
+        if (message->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) {
+            params->partition_ends -= 1;
+            if (log_level) {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_INFO,
+                    "phpkafka - %% Consumer reached end of %s [%"PRId32"] "
+                    "message queue at offset %"PRId64"\n",
+                    rd_kafka_topic_name(message->rkt),
+                    message->partition, message->offset);
+            }
+            //store offset
+            rd_kafka_offset_store(
+                message->rkt,
+                message->partition,
+                message->offset == 0 ? 0 : message->offset-1
+            );
+            return;
+        }
+        //add_next_index_string(return_value, rd_kafka_message_errstr(message), 1);
+        if (log_level) {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - %% Consume error for topic \"%s\" [%"PRId32"] "
+                "offset %"PRId64": %s\n",
+                rd_kafka_topic_name(message->rkt),
+                message->partition,
+                message->offset,
+                rd_kafka_message_errstr(message)
+            );
+            return;
+        }
+    }
+    //add message to return value (perhaps add as array -> offset + msg?
+    add_next_index_string(return_value, rd_kafka_message_errstr(message), 1);
+    //store offset
+    rd_kafka_offset_store(
+        message->rkt,
+        message->partition,
+        message->offset == 0 ? 0 : message->offset-1
+    );
+}
+
 static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
        void *opaque)
 {
@@ -393,8 +456,90 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
         *partitions = values;
         i = meta->topics->partition_cnt;
     }
-    rd_kafka_metadata_destroy(meta);
+    if (meta)
+        rd_kafka_metadata_destroy(meta);
     return i;
+}
+
+void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, const char *offset, int item_count)
+{
+    rd_kafka_topic_t *rkt;
+    rd_kafka_topic_conf_t *conf;
+    const struct rd_kafka_metadata *meta = NULL;
+    rd_kafka_queue_t *rkqu = NULL;
+    int current, p, i = 0;
+    int32_t partition = 0;
+    int64_t start;
+    /**
+    int read_count;
+    zval *return_value;
+    int error_count;
+    */
+    struct consume_cb_params cb_params = {item_count, return_value, 0, 0};
+    //check for NULL pointers, all arguments are required!
+    if (rk == NULL || return_value == NULL || topic == NULL || offset == NULL || strlen(offset) == 0)
+        return;
+
+    if (!strcmp(offset, "end"))
+        start = RD_KAFKA_OFFSET_END;
+    else if (!strcmp(offset, "beginning"))
+        start = RD_KAFKA_OFFSET_BEGINNING;
+    else if (!strcmp(offset, "stored"))
+        start = RD_KAFKA_OFFSET_STORED;
+    else
+        start = strtoll(offset, NULL, 10);
+
+    /* Topic configuration */
+    conf = rd_kafka_topic_conf_new();
+
+    /* Create topic */
+    rkt = rd_kafka_topic_new(rk, topic, conf);
+    if (!rkt)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - Failed to read %s from %"PRId64" (%s)", topic, start, offset);
+        }
+        return;
+    }
+    rkqu = rd_kafka_queue_new(rk);
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, &meta, 5))
+    {
+        p = meta->topics->partition_cnt;
+        cb_params.partition_ends = p;
+        for (i=0;i<p;++i)
+        {
+            partition = meta->topics[0].partitions[i].id;
+            if (rd_kafka_consume_start_queue(rkt, partition, start, rkqu))
+            {
+                if (log_level)
+                {
+                    openlog("phpkafka", 0, LOG_USER);
+                    syslog(LOG_ERR,
+                        "Failed to start consuming topic %s [%"PRId32"]: %s",
+                        topic, partition, offset
+                    );
+                }
+                continue;
+            }
+        }
+        rd_kafka_consume_callback_queue(rkqu, 100, queue_consume, &cb_params);
+        for (i=0;i<p;++i)
+        {
+            partition = meta->topics[0].partitions[i].id;
+            rd_kafka_consume_stop(rkt, partition);
+        }
+        rd_kafka_queue_destroy(rkqu);
+        //read-count <> 0, not all EOF partitions, and still in queue
+        //keep polling
+        while(cb_params.read_count && cb_params.partition_ends && rd_kafka_outq_len(rk) > 0)
+            rd_kafka_poll(rk, 10);
+        //else, destroy topic.
+        rd_kafka_topic_destroy(rkt);
+    }
+    if (meta)
+        rd_kafka_metadata_destroy(meta);
 }
 
 void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count)
