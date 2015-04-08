@@ -25,7 +25,6 @@
 
 /* decalre the class entry */
 zend_class_entry *kafka_ce;
-
 /* the method table */
 /* each method can have its own parameters and visibility */
 static zend_function_entry kafka_functions[] = {
@@ -74,25 +73,85 @@ ZEND_GET_MODULE(kafka)
 #endif
 #endif
 
+#define GET_KAFKA_CONNECTION(varname, thisObj) \
+    kafka_connection *varname = (kafka_connection *) zend_object_store_get_object( \
+        thisObj TSRMLS_CC \
+    )
+
+
 PHP_MINIT_FUNCTION(kafka)
 {
     zend_class_entry ce;
     INIT_CLASS_ENTRY(ce, "Kafka", kafka_functions);
     kafka_ce = zend_register_internal_class(&ce TSRMLS_CC);
     //do not allow people to extend this class, make it final
+    kafka_ce->create_object = create_kafka_connection;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
     zend_declare_property_null(kafka_ce, "partition", sizeof("partition") -1, ZEND_ACC_PRIVATE TSRMLS_CC);
     REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_BEGIN", PHP_KAFKA_OFFSET_BEGIN);
     REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_END", PHP_KAFKA_OFFSET_END);
     REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_ON", PHP_KAFKA_LOGLEVEL_ON);
     REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_OFF", PHP_KAFKA_LOGLEVEL_OFF);
+    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "MODE_CONSUMER", PHP_KAFKA_MODE_CONSUMER);
+    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "MODE_PRODUCER", PHP_KAFKA_MODE_PRODUCER);
     return SUCCESS;
 }
 PHP_RSHUTDOWN_FUNCTION(kafka) { return SUCCESS; }
 PHP_RINIT_FUNCTION(kafka) { return SUCCESS; }
 PHP_MSHUTDOWN_FUNCTION(kafka) {
-    kafka_destroy();
     return SUCCESS;
+}
+
+zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC)
+{
+    zend_object_value retval;
+    kafka_connection *intern;
+    zval *tmp;
+
+    // allocate the struct we're going to use
+    intern = emalloc(sizeof *intern);
+    memset(intern, 0, sizeof *intern);
+
+    zend_object_std_init(&intern->std, class_type TSRMLS_CC);
+    //add properties table
+#if PHP_VERSION_ID < 50399
+    zend_hash_copy(
+        interns->std.properties, &class_type->default_properties,
+        (copy_ctor_func_t)zval_add_ref,
+        (void *)&tmp,
+        sizeof tmp
+    );
+#else
+    object_properties_init(&intern->std, class_type);
+#endif
+
+    // create a destructor for this struct
+    retval.handle = zend_objects_store_put(
+        intern,
+        (zend_objects_store_dtor_t) zend_objects_destroy_object,
+        free_kafka_connection,
+        NULL TSRMLS_CC
+    );
+    retval.handlers = zend_get_std_object_handlers();
+
+    return retval;
+}
+
+//clean current connections
+void free_kafka_connection(void *object TSRMLS_DC)
+{
+    kafka_connection *connection = ((kafka_connection *) object);
+    if (connection->brokers)
+        efree(connection->brokers);
+    if (connection->consumer != NULL)
+        kafka_destroy(
+            connection->consumer
+        );
+    if (connection->producer != NULL)
+        kafka_destroy(
+            connection->producer
+        );
+    efree(connection);
 }
 
 /** {{{ proto void DOMDocument::__construct( string $brokers );
@@ -100,24 +159,65 @@ PHP_MSHUTDOWN_FUNCTION(kafka) {
 */
 PHP_METHOD(Kafka, __construct)
 {
-    char *brokers = "localhost:9092";
-    int brokers_len;
+    char *brokers = NULL;
+    int brokers_len = 0;
+    kafka_connection *connection = (kafka_connection *) zend_object_store_get_object(
+        getThis() TSRMLS_CC
+    );
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|s",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s",
             &brokers, &brokers_len) == FAILURE) {
         return;
     }
-
+    connection->brokers = estrdup(brokers);
     kafka_connect(brokers);
 }
 /* }}} end Kafka::__construct */
 
-/* {{{ proto bool Kafka::isConnected( void )
+/* {{{ proto bool Kafka::isConnected( [ int $mode ] )
     returns true if kafka connection is active, fals if not
+    Mode defaults to current active mode
 */
 PHP_METHOD(Kafka, isConnected)
 {
-    if (kafka_is_connected()) {
+    zval *mode = NULL,
+        *obj = getThis();
+    long tmp_val = -1;
+    rd_kafka_type_t type;
+    GET_KAFKA_CONNECTION(k, obj);
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z", &mode) == FAILURE)
+        return;
+    if (mode)
+    {
+        if (Z_TYPE_P(mode) == IS_LONG)
+            tmp_val = Z_LVAL_P(mode);
+        if (tmp_val != PHP_KAFKA_MODE_CONSUMER && tmp_val != PHP_KAFKA_MODE_PRODUCER)
+        {
+            zend_throw_exception(
+                BASE_EXCEPTION,
+                "invalid argument passed to Kafka::isConnected, use Kafka::MODE_* constants",
+                 0 TSRMLS_CC
+            );
+            return;
+        }
+        if (tmp_val == PHP_KAFKA_MODE_CONSUMER)
+            type = RD_KAFKA_CONSUMER;
+        else
+            type = RD_KAFKA_PRODUCER;
+    }
+    else
+        type = k->rk_type;
+    if (type == RD_KAFKA_CONSUMER)
+    {
+        if (k->consumer != NULL)
+        {
+            RETURN_TRUE;
+        }
+        RETURN_FALSE;
+
+    }
+    if (k->producer != NULL)
+    {
         RETURN_TRUE;
     }
     RETURN_FALSE;
@@ -129,7 +229,22 @@ PHP_METHOD(Kafka, isConnected)
 */
 PHP_METHOD(Kafka, __destruct)
 {
-    kafka_destroy();
+    kafka_connection *connection = (kafka_connection *) zend_object_store_get_object(
+        getThis() TSRMLS_CC
+    );
+    if (connection->brokers)
+        efree(connection->brokers);
+    if (connection->consumer != NULL)
+        kafka_destroy(
+            connection->consumer
+        );
+    if (connection->producer != NULL)
+        kafka_destroy(
+            connection->producer
+        );
+    connection->producer    = NULL;
+    connection->brokers     = NULL;
+    connection->consumer    = NULL;
 }
 /* }}} end Kafka::__destruct */
 
@@ -211,8 +326,22 @@ PHP_METHOD(Kafka, setPartition)
 */
 PHP_METHOD(Kafka, getTopics)
 {
+    zval *obj = getThis();
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (connection->brokers == NULL && connection->consumer == NULL)
+    {
+        zend_throw_exception(BASE_EXCEPTION, "No brokers to get topics from", 0 TSRMLS_CC);
+    }
+    if (connection->consumer == NULL)
+    {
+        connection->consumer = kafka_set_connection(
+            RD_KAFKA_CONSUMER,
+            connection->brokers
+        );
+        connection->rk_type = RD_KAFKA_CONSUMER;
+    }
     array_init(return_value);
-    kafka_get_topics(return_value);
+    kafka_get_topics(connection->consumer, return_value);
 }
 /* }}} end Kafka::getTopics */
 
@@ -221,7 +350,9 @@ PHP_METHOD(Kafka, getTopics)
 */
 PHP_METHOD(Kafka, setBrokers)
 {
-    zval *brokers;
+    zval *brokers,
+        *obj = getThis();
+    GET_KAFKA_CONNECTION(connection, obj);
 
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z",
             &brokers) == FAILURE) {
@@ -231,9 +362,24 @@ PHP_METHOD(Kafka, setBrokers)
         zend_throw_exception(BASE_EXCEPTION, "Kafka::setBrokers expects argument to be a string", 0 TSRMLS_CC);
         return;
     }
-    kafka_destroy();
+    if (connection->consumer)
+        kafka_destroy(connection->consumer);
+    if (connection->producer)
+        kafka_destroy(connection->producer);
+    if (connection->brokers)
+    {//previous connections are possible
+        efree(connection->brokers);
+        //set brokers
+        connection->brokers = estrdup(
+            Z_STRVAL_P(brokers)
+        );
+        kafka_connect(connection->brokers);
+        //reinit to NULL
+        connection->producer = connection->consumer = NULL;
+    }
+    //set kafka to latest brokers string
     kafka_connect(Z_STRVAL_P(brokers));
-    RETURN_ZVAL(getThis(), 1, 0);
+    RETURN_ZVAL(obj, 1, 0);
 }
 /* }}} end Kafka::setBrokers */
 
@@ -242,14 +388,20 @@ PHP_METHOD(Kafka, setBrokers)
 */
 PHP_METHOD(Kafka, getPartitionsForTopic)
 {
+    zval *obj = getThis();
     char *topic = NULL;
     int topic_len = 0;
+    GET_KAFKA_CONNECTION(connection, obj);
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s",
             &topic, &topic_len) == FAILURE) {
         return;
     }
+    if (!connection->consumer)
+    {
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
+    }
     array_init(return_value);
-    kafka_get_partitions(return_value, topic);
+    kafka_get_partitions(connection->consumer, return_value, topic);
 }
 /* }}} end Kafka::getPartitionsForTopic */
 
@@ -263,11 +415,23 @@ PHP_METHOD(Kafka, getPartitionOffsets)
         kafka_r;
     int *offsets = NULL,
         i;
+    kafka_connection *connection = (kafka_connection *) zend_object_store_get_object(
+        getThis() TSRMLS_CC
+    );
+
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s",
             &topic, &topic_len) == FAILURE) {
         return;
     }
-    kafka_r = kafka_partition_offsets(&offsets, topic);
+    if (!connection->consumer)
+    {
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
+    }
+    kafka_r = kafka_partition_offsets(
+        connection->consumer,
+        &offsets,
+        topic
+    );
     if (kafka_r < 1) {
         const char *msg = kafka_r == 1 ? "Failed to get metadata" : "unknown partition count (or mem-error)";
         zend_throw_exception(
@@ -283,13 +447,52 @@ PHP_METHOD(Kafka, getPartitionOffsets)
     free(offsets);//kafka allocates this bit, free outside of zend
 } /* }}} end Kafka::getPartitionOffsets */
 
-/* {{{ proto bool Kafka::disconnect( void );
+/* {{{ proto bool Kafka::disconnect( [int $mode] );
+   if No $mode argument is passed, all connections will be closed
     Disconnects kafka, returns false if disconnect failed
-    Warning: producing a new message will reconnect to the initial brokers
 */
 PHP_METHOD(Kafka, disconnect)
 {
-    kafka_destroy();
+    zval *obj = getThis(),
+        *mode = NULL;
+    long type = -1;
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z",
+            &mode) == FAILURE) {
+        return;
+    }
+    if (mode)
+    {//mode was given
+        if (Z_TYPE_P(mode) == IS_LONG)
+            type = Z_LVAL_P(mode);
+        if (type != PHP_KAFKA_MODE_CONSUMER && type != PHP_KAFKA_MODE_PRODUCER)
+        {
+            zend_throw_exception(
+                BASE_EXCEPTION,
+                "invalid argument passed to Kafka::disconnect, use Kafka::MODE_* constants",
+                0 TSRMLS_CC
+            );
+            return;
+        }
+        if (type == PHP_KAFKA_MODE_CONSUMER)
+        {//disconnect consumer
+            if (connection->consumer)
+                kafka_destroy(connection->consumer);
+            connection->consumer = NULL;
+        }
+        else
+        {
+            if (connection->producer)
+                kafka_destroy(connection->producer);
+            connection->producer = NULL;
+        }
+        RETURN_TRUE;
+    }
+    if (connection->consumer)
+        kafka_destroy(connection->consumer);
+    if (connection->producer)
+        kafka_destroy(connection->producer);
+    connection->producer = connection->consumer = NULL;
     if (kafka_is_connected()) {
         RETURN_FALSE;
     }
@@ -303,8 +506,8 @@ PHP_METHOD(Kafka, disconnect)
 */
 PHP_METHOD(Kafka, produce)
 {
-    zval *object = getThis(),
-        *partition;
+    zval *object = getThis();
+    GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     char *msg;
     int topic_len;
@@ -315,8 +518,13 @@ PHP_METHOD(Kafka, produce)
             &msg, &msg_len) == FAILURE) {
         return;
     }
+    if (!connection->producer)
+    {
+        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers);
+        connection->rk_type = RD_KAFKA_PRODUCER;
+    }
 
-    kafka_produce(topic, msg, msg_len);
+    kafka_produce(connection->producer, topic, msg, msg_len);
     RETURN_ZVAL(object, 1, 0);
 }
 /* }}} end Kafka::produce */
@@ -328,6 +536,7 @@ PHP_METHOD(Kafka, consume)
 {
     zval *object = getThis(),
         *partition;
+    GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     int topic_len;
     char *offset;
@@ -355,8 +564,11 @@ PHP_METHOD(Kafka, consume)
     } else if (Z_TYPE_P(item_count) == IS_LONG) {
         count = Z_LVAL_P(item_count);
     } else {}//todo throw exception?
-
+    if (!connection->consumer)
+    {
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
+    }
     array_init(return_value);
-    kafka_consume(return_value, topic, offset, count);
+    kafka_consume(connection->consumer, return_value, topic, offset, count);
 }
 /* }}} end Kafka::consume */

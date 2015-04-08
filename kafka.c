@@ -56,9 +56,16 @@ int kafka_is_connected( void )
     return 1;
 }
 
-void kafka_set_partition(int partition_selected)
+void kafka_msg_delivered (rd_kafka_t *rk,
+                           void *payload, size_t len,
+                           int error_code,
+                           void *opaque, void *msg_opaque)
 {
-    partition = partition_selected;
+    if (error_code && log_level) {
+        openlog("phpkafka", 0, LOG_USER);
+        syslog(LOG_INFO, "phpkafka - Message delivery failed: %s",
+                rd_kafka_err2str(error_code));
+    }
 }
 
 void kafka_stop(int sig)
@@ -79,16 +86,43 @@ void kafka_err_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque)
     kafka_stop(err);
 }
 
-void kafka_msg_delivered (rd_kafka_t *rk,
-                           void *payload, size_t len,
-                           int error_code,
-                           void *opaque, void *msg_opaque)
+rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b)
 {
-    if (error_code && log_level) {
-        openlog("phpkafka", 0, LOG_USER);
-        syslog(LOG_INFO, "phpkafka - Message delivery failed: %s",
-                rd_kafka_err2str(error_code));
+    rd_kafka_t *r = NULL;
+    char *tmp = brokers;
+    char errstr[512];
+    rd_kafka_conf_t *conf = rd_kafka_conf_new();
+    if (!(r = rd_kafka_new(type, conf, errstr, sizeof(errstr)))) {
+        if (log_level) {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - failed to create new producer: %s", errstr);
+        }
+        exit(1);
     }
+    /* Add brokers */
+    if (rd_kafka_brokers_add(r, b) == 0) {
+        if (log_level) {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "php kafka - No valid brokers specified");
+        }
+        exit(1);
+    }
+    /* Set up a message delivery report callback.
+     * It will be called once for each message, either on successful
+     * delivery to broker, or upon failure to deliver to broker. */
+    rd_kafka_conf_set_dr_cb(conf, kafka_msg_delivered);
+    rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
+
+    if (log_level) {
+        openlog("phpkafka", 0, LOG_USER);
+        syslog(LOG_INFO, "phpkafka - using: %s", brokers);
+    }
+    return r;
+}
+
+void kafka_set_partition(int partition_selected)
+{
+    partition = partition_selected;
 }
 
 void kafka_setup(char* brokers_list)
@@ -96,21 +130,26 @@ void kafka_setup(char* brokers_list)
     brokers = brokers_list;
 }
 
-void kafka_destroy()
+void kafka_destroy(rd_kafka_t *r)
 {
-    if(rk != NULL) {
-        rd_kafka_destroy(rk);
+    if (r == NULL || (void *)r == (void *)rk)
+    {//NULL passed, or r == global pointer variable
+        r = rk;
+        rk = NULL;
+    }
+    if(r != NULL) {
+        rd_kafka_destroy(r);
         //this wait is blocking PHP
         //not calling it will yield segfault, though
         rd_kafka_wait_destroyed(5);
-        rk = NULL;
+        r = NULL;
     }
 }
 
 static void kafka_init( rd_kafka_type_t type )
 {
     if (rk_type != type) {
-        kafka_destroy();
+        kafka_destroy(NULL);
     }
     if (rk == NULL)
     {
@@ -144,7 +183,7 @@ static void kafka_init( rd_kafka_type_t type )
     }
 }
 
-void kafka_produce(char* topic, char* msg, int msg_len)
+void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
 {
 
     signal(SIGINT, kafka_stop);
@@ -155,13 +194,16 @@ void kafka_produce(char* topic, char* msg, int msg_len)
 
     rd_kafka_topic_conf_t *topic_conf;
 
-    kafka_init(RD_KAFKA_PRODUCER);
+    if (r == NULL) {
+        kafka_init(RD_KAFKA_PRODUCER);
+        r = rk;
+    }
 
     /* Topic configuration */
     topic_conf = rd_kafka_topic_conf_new();
 
     /* Create topic */
-    rkt = rd_kafka_topic_new(rk, topic, topic_conf);
+    rkt = rd_kafka_topic_new(r, topic, topic_conf);
 
     if (rd_kafka_produce(rkt, partition,
                      RD_KAFKA_MSG_F_COPY,
@@ -181,15 +223,15 @@ void kafka_produce(char* topic, char* msg, int msg_len)
                rd_kafka_err2str(
                rd_kafka_errno2err(errno)));
         }
-        rd_kafka_poll(rk, 1);
+        rd_kafka_poll(r, 1);
     }
 
     /* Poll to handle delivery reports */
-    rd_kafka_poll(rk, 1);
+    rd_kafka_poll(r, 1);
 
     /* Wait for messages to be delivered */
-    while (run && rd_kafka_outq_len(rk) > 0)
-      rd_kafka_poll(rk, 10);
+    while (run && rd_kafka_outq_len(r) > 0)
+      rd_kafka_poll(r, 10);
 
     rd_kafka_topic_destroy(rkt);
 }
@@ -228,12 +270,16 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
 }
 
 //get topics + partition count
-void kafka_get_topics(zval *return_value)
+void kafka_get_topics(rd_kafka_t *r, zval *return_value)
 {
     int i;
     const struct rd_kafka_metadata *meta = NULL;
-    kafka_init(RD_KAFKA_CONSUMER);
-    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 1, NULL, &meta, 200)) {
+    if (r == NULL)
+    {
+        kafka_init(RD_KAFKA_CONSUMER);
+        r = rk;
+    }
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 1, NULL, &meta, 200)) {
         for (i=0;i<meta->topic_cnt;++i) {
             add_assoc_long(
                return_value,
@@ -248,21 +294,25 @@ void kafka_get_topics(zval *return_value)
 }
 
 static
-int kafka_partition_count(const char *topic)
+int kafka_partition_count(rd_kafka_t *r, const char *topic)
 {
     rd_kafka_topic_t *rkt;
     rd_kafka_topic_conf_t *conf;
     int i;//C89 compliant
     //connect as consumer if required
-    kafka_init(RD_KAFKA_CONSUMER);
+    if (r == NULL)
+    {
+        kafka_init(RD_KAFKA_CONSUMER);
+        r = rk;
+    }
     /* Topic configuration */
     conf = rd_kafka_topic_conf_new();
 
     /* Create topic */
-    rkt = rd_kafka_topic_new(rk, topic, conf);
+    rkt = rd_kafka_topic_new(r, topic, conf);
     //metadata API required rd_kafka_metadata_t** to be passed
     const struct rd_kafka_metadata *meta = NULL;
-    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, &meta, 200))
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 0, rkt, &meta, 200))
         i = (int) meta->topics->partition_cnt;
     else
         i = 0;
@@ -273,9 +323,9 @@ int kafka_partition_count(const char *topic)
 }
 
 //get the available partitions for a given topic
-void kafka_get_partitions(zval *return_value, char *topic)
+void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic)
 {
-    int i, count = kafka_partition_count(topic);
+    int i, count = kafka_partition_count(r, topic);
     for (i=0;i<count;++i) {
         add_next_index_long(return_value, i);
     }
@@ -288,20 +338,24 @@ void kafka_get_partitions(zval *return_value, char *topic)
  * @param const char * topic topic name
  * @return int (0 == success, all others indicate failure)
  */
-int kafka_partition_offsets(int **partitions, const char *topic)
+int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic)
 {
     rd_kafka_topic_t *rkt;
     rd_kafka_topic_conf_t *conf;
     int i = 0;
     //connect as consumer if required
-    kafka_init(RD_KAFKA_CONSUMER);
+    if (r == NULL)
+    {
+        kafka_init(RD_KAFKA_CONSUMER);
+        r = rk;
+    }
     /* Topic configuration */
     conf = rd_kafka_topic_conf_new();
 
     /* Create topic */
-    rkt = rd_kafka_topic_new(rk, topic, conf);
+    rkt = rd_kafka_topic_new(r, topic, conf);
     const struct rd_kafka_metadata *meta = NULL;
-    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, &meta, 200))
+    if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 0, rkt, &meta, 200))
     {
         *partitions = realloc(*partitions, meta->topics->partition_cnt * sizeof **partitions);
         if (*partitions == NULL) {
@@ -340,7 +394,7 @@ int kafka_partition_offsets(int **partitions, const char *topic)
     return i;
 }
 
-void kafka_consume(zval* return_value, char* topic, char* offset, int item_count)
+void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count)
 {
 
   int read_counter = 0;
@@ -357,7 +411,11 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
   }
     rd_kafka_topic_t *rkt;
 
-    kafka_init(RD_KAFKA_CONSUMER);
+    if (r == NULL)
+    {
+        kafka_init(RD_KAFKA_CONSUMER);
+        r = rk;
+    }
 
     rd_kafka_topic_conf_t *topic_conf;
 
@@ -365,7 +423,7 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
     topic_conf = rd_kafka_topic_conf_new();
 
     /* Create topic */
-    rkt = rd_kafka_topic_new(rk, topic, topic_conf);
+    rkt = rd_kafka_topic_new(r, topic, topic_conf);
     if (log_level) {
         openlog("phpkafka", 0, LOG_USER);
         syslog(LOG_INFO, "phpkafka - start_offset: %"PRId64" and offset passed: %s", start_offset, offset);
@@ -428,5 +486,4 @@ void kafka_consume(zval* return_value, char* topic, char* offset, int item_count
     /* Stop consuming */
     rd_kafka_consume_stop(rkt, partition);
     rd_kafka_topic_destroy(rkt);
-    rd_kafka_destroy(rk);
 }
