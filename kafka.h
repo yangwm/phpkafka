@@ -26,8 +26,8 @@ int kafka_is_connected( void );
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b);
 void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count);
 void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic);
-int kafka_partition_offsets(rd_kafka_t *r, int **partitions, const char *topic);
+int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic);
 void kafka_get_topics(rd_kafka_t *r,zval *return_value);
-void kafka_destroy(rd_kafka_t *r);
+void kafka_destroy(rd_kafka_t *r, int timeout);
 
 #endif
