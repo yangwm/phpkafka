@@ -371,7 +371,7 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
             values[i] = -1;//initialize memory
             if (rd_kafka_consume_start(rkt, i, RD_KAFKA_OFFSET_BEGINNING))
                 continue;
-            rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 5),
+            rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 900),
                     *rkmessage_return;
 
             if (!rkmessage) /* timeout */
