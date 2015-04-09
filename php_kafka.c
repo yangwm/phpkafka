@@ -74,6 +74,8 @@ ZEND_END_ARG_INFO()
 
 /* decalre the class entry */
 zend_class_entry *kafka_ce;
+zend_class_entry *kafka_exception;
+
 /* the method table */
 /* each method can have its own parameters and visibility */
 static zend_function_entry kafka_functions[] = {
@@ -131,9 +133,16 @@ ZEND_GET_MODULE(kafka)
 
 PHP_MINIT_FUNCTION(kafka)
 {
-    zend_class_entry ce;
+    zend_class_entry ce,
+            ce_ex;
     INIT_CLASS_ENTRY(ce, "Kafka", kafka_functions);
     kafka_ce = zend_register_internal_class(&ce TSRMLS_CC);
+    INIT_CLASS_ENTRY(ce_ex, "KafkaException", NULL);
+    kafka_exception = zend_register_internal_class_ex(
+        &ce_ex,
+        BASE_EXCEPTION,
+        NULL TSRMLS_CC
+    );
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
@@ -249,7 +258,7 @@ PHP_METHOD(Kafka, isConnected)
         if (tmp_val != PHP_KAFKA_MODE_CONSUMER && tmp_val != PHP_KAFKA_MODE_PRODUCER)
         {
             zend_throw_exception(
-                BASE_EXCEPTION,
+                kafka_exception,
                 "invalid argument passed to Kafka::isConnected, use Kafka::MODE_* constants",
                  0 TSRMLS_CC
             );
@@ -321,7 +330,7 @@ PHP_METHOD(Kafka, set_partition)
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z", &partition, &mode) == FAILURE)
         return;
     if (Z_TYPE_P(partition) != IS_LONG || (mode && Z_TYPE_P(mode) != IS_LONG)) {
-        zend_throw_exception(BASE_EXCEPTION, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
         return;
     }
     if (mode)
@@ -329,7 +338,7 @@ PHP_METHOD(Kafka, set_partition)
         if (Z_LVAL_P(mode) != PHP_KAFKA_MODE_CONSUMER && Z_LVAL_P(mode) != PHP_KAFKA_MODE_PRODUCER)
         {
             zend_throw_exception(
-                BASE_EXCEPTION,
+                kafka_exception,
                 "invalid mode argument passed to Kafka::setPartition, use Kafka::MODE_* constants",
                 0 TSRMLS_CC
             );
@@ -340,7 +349,7 @@ PHP_METHOD(Kafka, set_partition)
     if (p_value < -1)
     {
         zend_throw_exception(
-            BASE_EXCEPTION,
+            kafka_exception,
             "invalid partition passed to Kafka::setPartition, partition value should be >= 0 or Kafka::PARTION_RANDOM",
             0 TSRMLS_CC
         );
@@ -376,7 +385,7 @@ PHP_METHOD(Kafka, setLogLevel)
         return;//?
     }
     if (Z_TYPE_P(log_level) != IS_LONG) {
-        zend_throw_exception(BASE_EXCEPTION, "Kafka::setLogLevel expects argument to be an int", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception, "Kafka::setLogLevel expects argument to be an int", 0 TSRMLS_CC);
         return;
     }
     if (
@@ -384,7 +393,7 @@ PHP_METHOD(Kafka, setLogLevel)
         &&
         Z_LVAL_P(log_level) != PHP_KAFKA_LOGLEVEL_OFF
     ) {
-        zend_throw_exception(BASE_EXCEPTION, "Invalid argument, use Kafka::LOG_* constants", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception, "Invalid argument, use Kafka::LOG_* constants", 0 TSRMLS_CC);
         return;
     }
     kafka_set_log_level(Z_LVAL_P(log_level));
@@ -405,7 +414,7 @@ PHP_METHOD(Kafka, setPartition)
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z", &partition, &mode) == FAILURE)
         return;
     if (Z_TYPE_P(partition) != IS_LONG || (mode && Z_TYPE_P(mode) != IS_LONG)) {
-        zend_throw_exception(BASE_EXCEPTION, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
         return;
     }
     if (mode)
@@ -413,7 +422,7 @@ PHP_METHOD(Kafka, setPartition)
         if (Z_LVAL_P(mode) != PHP_KAFKA_MODE_CONSUMER && Z_LVAL_P(mode) != PHP_KAFKA_MODE_PRODUCER)
         {
             zend_throw_exception(
-                BASE_EXCEPTION,
+                kafka_exception,
                 "invalid mode argument passed to Kafka::setPartition, use Kafka::MODE_* constants",
                 0 TSRMLS_CC
             );
@@ -424,7 +433,7 @@ PHP_METHOD(Kafka, setPartition)
     if (p_value < -1)
     {
         zend_throw_exception(
-            BASE_EXCEPTION,
+            kafka_exception,
             "invalid partition passed to Kafka::setPartition, partition value should be >= 0 or Kafka::PARTION_RANDOM",
             0 TSRMLS_CC
         );
@@ -461,7 +470,7 @@ PHP_METHOD(Kafka, getPartition)
         return;
     if (Z_TYPE_P(arg) != IS_LONG || (Z_LVAL_P(arg) != PHP_KAFKA_MODE_CONSUMER && Z_LVAL_P(arg) != PHP_KAFKA_MODE_PRODUCER))
     {
-        zend_throw_exception(BASE_EXCEPTION, "Invalid argument passed to Kafka::getPartition, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception, "Invalid argument passed to Kafka::getPartition, use Kafka::MODE_* constants", 0 TSRMLS_CC);
         return;
     }
     if (Z_LVAL_P(arg) == PHP_KAFKA_MODE_CONSUMER)
@@ -479,7 +488,7 @@ PHP_METHOD(Kafka, getTopics)
     GET_KAFKA_CONNECTION(connection, obj);
     if (connection->brokers == NULL && connection->consumer == NULL)
     {
-        zend_throw_exception(BASE_EXCEPTION, "No brokers to get topics from", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception, "No brokers to get topics from", 0 TSRMLS_CC);
     }
     if (connection->consumer == NULL)
     {
@@ -508,7 +517,7 @@ PHP_METHOD(Kafka, setBrokers)
         return;
     }
     if (Z_TYPE_P(brokers) != IS_STRING) {
-        zend_throw_exception(BASE_EXCEPTION, "Kafka::setBrokers expects argument to be a string", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception, "Kafka::setBrokers expects argument to be a string", 0 TSRMLS_CC);
         return;
     }
     if (connection->consumer)
@@ -585,7 +594,7 @@ PHP_METHOD(Kafka, getPartitionOffsets)
     if (kafka_r < 1) {
         const char *msg = kafka_r == 1 ? "Failed to get metadata" : "unknown partition count (or mem-error)";
         zend_throw_exception(
-            BASE_EXCEPTION,
+            kafka_exception,
             msg,
             0 TSRMLS_CC
         );
@@ -618,7 +627,7 @@ PHP_METHOD(Kafka, disconnect)
         if (type != PHP_KAFKA_MODE_CONSUMER && type != PHP_KAFKA_MODE_PRODUCER)
         {
             zend_throw_exception(
-                BASE_EXCEPTION,
+                kafka_exception,
                 "invalid argument passed to Kafka::disconnect, use Kafka::MODE_* constants",
                 0 TSRMLS_CC
             );
@@ -713,7 +722,7 @@ PHP_METHOD(Kafka, consume)
         } else {
 
             zend_throw_exception(
-                BASE_EXCEPTION,
+                kafka_exception,
                 "Invalid messageCount value passed to Kafka::consume, should be int or OFFSET constant",
                 0 TSRMLS_CC
             );
@@ -722,7 +731,7 @@ PHP_METHOD(Kafka, consume)
     if (count < -1)
     {
         zend_throw_exception(
-            BASE_EXCEPTION,
+            kafka_exception,
             "Invalid messageCount value passed to Kafka::consume",
             0 TSRMLS_CC
         );

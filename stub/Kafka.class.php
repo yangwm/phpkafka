@@ -39,15 +39,15 @@ final class Kafka
      * @param null|int $mode
      * @deprecated use setPartition instead
      * @return $this
-     * @throws \Exception
+     * @throws \KafkaException
      */
     public function set_partition($partition, $mode = null)
     {
         if (!is_int($partition) || ($mode !== null)) {
-            throw new \Exception('Invalid arguments passed to Kafka::set_topics');
+            throw new \KafkaException('Invalid arguments passed to Kafka::set_topics');
         }
         if ($mode && $mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
-            throw new \Exception(
+            throw new \KafkaException(
                 sprintf(
                     'Invalid mode passed to %s, use Kafka::MODE_* constants',
                     __METHOD__
@@ -55,7 +55,7 @@ final class Kafka
             );
         }
         if ($partition < self::PARTITION_RANDOM) {
-            throw new \Exception('Invalid partition');
+            throw new \KafkaException('Invalid partition');
         }
         $this->partition = $partition;
         return $this;
@@ -65,15 +65,15 @@ final class Kafka
      * @param int $partition
      * @param null|$mode
      * @return $this
-     * @throws \Exception
+     * @throws \KafkaException
      */
     public function setPartition($partition, $mode = null)
     {
         if (!is_int($partition) || ($mode !== null)) {
-            throw new \Exception('Invalid arguments passed to Kafka::set_topics');
+            throw new \KafkaException('Invalid arguments passed to Kafka::set_topics');
         }
         if ($mode && $mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
-            throw new \Exception(
+            throw new \KafkaException(
                 sprintf(
                     'Invalid mode passed to %s, use Kafka::MODE_* constants',
                     __METHOD__
@@ -81,7 +81,7 @@ final class Kafka
             );
         }
         if ($partition < self::PARTITION_RANDOM) {
-            throw new \Exception('Invalid partition');
+            throw new \KafkaException('Invalid partition');
         }
         $this->partition = $partition;
         return $this;
@@ -90,12 +90,12 @@ final class Kafka
     /**
      * @param int $mode
      * @return int
-     * @throws Exception
+     * @throws KafkaException
      */
     public function getPartition($mode)
     {
         if ($mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
-            throw new \Exception(
+            throw new \KafkaException(
                 sprintf(
                     'Invalid argument passed to %s, use %s::MODE_* constants',
                     __METHOD__,
@@ -109,12 +109,12 @@ final class Kafka
     /**
      * @param int $level
      * @return $this
-     * @throws \Exception (invalid argument)
+     * @throws \KafkaException (invalid argument)
      */
     public function setLogLevel($level)
     {
         if (!is_int($level)) {
-            throw new Exception(
+            throw new KafkaException(
                 sprintf(
                     '%s expects argument to be an int',
                     __METHOD__
@@ -122,7 +122,7 @@ final class Kafka
             );
         }
         if ($level != self::LOG_ON && $level != self::LOG_OFF) {
-            throw new Exception(
+            throw new KafkaException(
                 sprintf(
                     '%s argument invalid, use %s::LOG_* constants',
                     __METHOD__,
@@ -137,12 +137,12 @@ final class Kafka
     /**
      * @param string $brokers
      * @return $this
-     * @throws \Exception
+     * @throws \KafkaException
      */
     public function setBrokers($brokers)
     {
         if (!is_string($brokers)) {
-            throw new \Exception(
+            throw new \KafkaException(
                 sprintf(
                     '%s expects argument to be a string',
                     __CLASS__
@@ -164,7 +164,7 @@ final class Kafka
             $mode = $this->lastMode;
         }
         if ($mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
-            throw new \Exception(
+            throw new \KafkaException(
                 sprintf(
                     'invalid argument passed to %s, use Kafka::MODE_* constants',
                     __METHOD__
@@ -234,7 +234,7 @@ final class Kafka
     public function disconnect($mode = null)
     {
         if ($mode !== null && $mode != self::MODE_PRODUCER && $mode != self::MODE_CONSUMER) {
-            throw new \Exception(
+            throw new \KafkaException(
                 sprintf(
                     'invalid argument passed to %s, use Kafka::MODE_* constants',
                     __METHOD__
@@ -261,7 +261,7 @@ final class Kafka
      * if a partition has offset -1, the consume call failed
      * @param string $topic
      * @return array
-     * @throws \Exception when meta call failed or no partitions available
+     * @throws \KafkaException when meta call failed or no partitions available
      */
     public function getPartitionOffsets($topic)
     {
