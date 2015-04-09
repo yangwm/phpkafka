@@ -42,7 +42,8 @@ typedef struct _kafka_r {
     rd_kafka_t          *consumer;
     rd_kafka_t          *producer;
     char                *brokers;
-    long                partition;
+    long                consumer_partition;
+    long                producer_partition;
     rd_kafka_type_t     rk_type;
 } kafka_connection;
 

@@ -87,13 +87,13 @@ PHP_MINIT_FUNCTION(kafka)
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
-    zend_declare_property_null(kafka_ce, "partition", sizeof("partition") -1, ZEND_ACC_PRIVATE TSRMLS_CC);
     REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_BEGIN", PHP_KAFKA_OFFSET_BEGIN);
     REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_END", PHP_KAFKA_OFFSET_END);
     REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_ON", PHP_KAFKA_LOGLEVEL_ON);
     REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_OFF", PHP_KAFKA_LOGLEVEL_OFF);
     REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "MODE_CONSUMER", PHP_KAFKA_MODE_CONSUMER);
     REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "MODE_PRODUCER", PHP_KAFKA_MODE_PRODUCER);
+    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "PARTITION_RANDOM", -1);
     return SUCCESS;
 }
 PHP_RSHUTDOWN_FUNCTION(kafka) { return SUCCESS; }
@@ -111,6 +111,9 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
     // allocate the struct we're going to use
     intern = emalloc(sizeof *intern);
     memset(intern, 0, sizeof *intern);
+    //init partitions to random partitions
+    intern->consumer_partition = RD_KAFKA_PARTITION_UA;
+    intern->producer_partition = RD_KAFKA_PARTITION_UA;
 
     zend_object_std_init(&intern->std, class_type TSRMLS_CC);
     //add properties table
@@ -249,29 +252,65 @@ PHP_METHOD(Kafka, __destruct)
     connection->producer    = NULL;
     connection->brokers     = NULL;
     connection->consumer    = NULL;
+    connection->consumer_partition = connection->producer_partition = RD_KAFKA_PARTITION_UA;
 }
 /* }}} end Kafka::__destruct */
 
-/* {{{ proto Kafka Kafka::set_partition( int $partition );
+/* {{{ proto Kafka Kafka::set_partition( int $partition [, int $mode ] );
     Set partition (used by consume method)
     This method is deprecated, in favour of the more PSR-compliant
     Kafka::setPartition
 */
 PHP_METHOD(Kafka, set_partition)
 {
-    zval *partition;
-
-    if (
-            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &partition) == FAILURE
-        ||
-            Z_TYPE_P(partition) != IS_LONG
-    ) {
-        zend_throw_exception(BASE_EXCEPTION, "Partition is expected to be an int", 0 TSRMLS_CC);
+    zval *partition,
+        *mode = NULL,
+        *obj = getThis();
+    long p_value;
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z", &partition, &mode) == FAILURE)
+        return;
+    if (Z_TYPE_P(partition) != IS_LONG || (mode && Z_TYPE_P(mode) != IS_LONG)) {
+        zend_throw_exception(BASE_EXCEPTION, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
         return;
     }
-    kafka_set_partition(Z_LVAL_P(partition));
-    //update partition property, so we can check to see if it's set when consuming
-    zend_update_property(kafka_ce, getThis(), "partition", sizeof("partition") -1, partition TSRMLS_CC);
+    if (mode)
+    {
+        if (Z_LVAL_P(mode) != PHP_KAFKA_MODE_CONSUMER && Z_LVAL_P(mode) != PHP_KAFKA_MODE_PRODUCER)
+        {
+            zend_throw_exception(
+                BASE_EXCEPTION,
+                "invalid mode argument passed to Kafka::setPartition, use Kafka::MODE_* constants",
+                0 TSRMLS_CC
+            );
+            return;
+        }
+    }
+    p_value = Z_LVAL_P(partition);
+    if (p_value < -1)
+    {
+        zend_throw_exception(
+            BASE_EXCEPTION,
+            "invalid partition passed to Kafka::setPartition, partition value should be >= 0 or Kafka::PARTION_RANDOM",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+    p_value = p_value == -1 ? RD_KAFKA_PARTITION_UA : p_value;
+    if (!mode)
+    {
+        connection->consumer_partition = p_value;
+        connection->producer_partition = p_value;
+        kafka_set_partition(p_value);
+    }
+    else
+    {
+        if (Z_LVAL_P(mode) != PHP_KAFKA_MODE_CONSUMER)
+            connection->producer_partition = p_value;
+        else
+            connection->consumer_partition = p_value;
+    }
+    //return $this
     RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::set_partition */
@@ -303,23 +342,58 @@ PHP_METHOD(Kafka, setLogLevel)
 }
 /* }}} end Kafka::setLogLevel */
 
-/* {{{ proto Kafka Kafka::setPartition( int $partition );
+/* {{{ proto Kafka Kafka::setPartition( int $partition [, int $mode ] );
     Set partition to use for Kafka::consume calls
 */
 PHP_METHOD(Kafka, setPartition)
 {
-    zval *partition;
-
-    if (
-            zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &partition) == FAILURE
-        ||
-            Z_TYPE_P(partition) != IS_LONG
-    ) {
-        zend_throw_exception(BASE_EXCEPTION, "Partition is expected to be an int", 0 TSRMLS_CC);
+    zval *partition,
+        *mode = NULL,
+        *obj = getThis();
+    long p_value;
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z", &partition, &mode) == FAILURE)
+        return;
+    if (Z_TYPE_P(partition) != IS_LONG || (mode && Z_TYPE_P(mode) != IS_LONG)) {
+        zend_throw_exception(BASE_EXCEPTION, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
         return;
     }
-    kafka_set_partition(Z_LVAL_P(partition));
-    zend_update_property(kafka_ce, getThis(), "partition", sizeof("partition") -1, partition TSRMLS_CC);
+    if (mode)
+    {
+        if (Z_LVAL_P(mode) != PHP_KAFKA_MODE_CONSUMER && Z_LVAL_P(mode) != PHP_KAFKA_MODE_PRODUCER)
+        {
+            zend_throw_exception(
+                BASE_EXCEPTION,
+                "invalid mode argument passed to Kafka::setPartition, use Kafka::MODE_* constants",
+                0 TSRMLS_CC
+            );
+            return;
+        }
+    }
+    p_value = Z_LVAL_P(partition);
+    if (p_value < -1)
+    {
+        zend_throw_exception(
+            BASE_EXCEPTION,
+            "invalid partition passed to Kafka::setPartition, partition value should be >= 0 or Kafka::PARTION_RANDOM",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+    p_value = p_value == -1 ? RD_KAFKA_PARTITION_UA : p_value;
+    if (!mode)
+    {
+        connection->consumer_partition = p_value;
+        connection->producer_partition = p_value;
+        kafka_set_partition(p_value);
+    }
+    else
+    {
+        if (Z_LVAL_P(mode) != PHP_KAFKA_MODE_CONSUMER)
+            connection->producer_partition = p_value;
+        else
+            connection->consumer_partition = p_value;
+    }
     //return $this
     RETURN_ZVAL(getThis(), 1, 0);
 }
@@ -380,6 +454,7 @@ PHP_METHOD(Kafka, setBrokers)
         kafka_connect(connection->brokers);
         //reinit to NULL
         connection->producer = connection->consumer = NULL;
+        connection->consumer_partition = connection->producer_partition = RD_KAFKA_PARTITION_UA;
     }
     //set kafka to latest brokers string
     kafka_connect(Z_STRVAL_P(brokers));
@@ -497,6 +572,7 @@ PHP_METHOD(Kafka, disconnect)
     if (connection->producer)
         kafka_destroy(connection->producer, 1);
     connection->producer = connection->consumer = NULL;
+    connection->consumer_partition = connection->producer_partition = RD_KAFKA_PARTITION_UA;
     if (kafka_is_connected()) {
         RETURN_FALSE;
     }
@@ -527,7 +603,9 @@ PHP_METHOD(Kafka, produce)
         connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers);
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
-
+    kafka_set_partition(
+        (int) connection->producer_partition
+    );
     kafka_produce(connection->producer, topic, msg, msg_len);
     RETURN_ZVAL(object, 1, 0);
 }
@@ -538,8 +616,7 @@ PHP_METHOD(Kafka, produce)
 */
 PHP_METHOD(Kafka, consume)
 {
-    zval *object = getThis(),
-        *partition;
+    zval *object = getThis();
     GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     int topic_len;
@@ -548,15 +625,6 @@ PHP_METHOD(Kafka, consume)
     long count = 0;
     zval *item_count;
 
-    partition = zend_read_property(kafka_ce, object, "partition", sizeof("partition") -1, 0 TSRMLS_CC);
-    if (Z_TYPE_P(partition) == IS_NULL) {
-        //TODO: throw exception, trigger error, fallback to default (0) partition...
-        //for now, default to 0
-        kafka_set_partition(0);
-        ZVAL_LONG(partition, 0);
-        //update property value ->
-        zend_update_property(kafka_ce, object, "partition", sizeof("partition") -1, partition TSRMLS_CC);
-    }
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|sz",
             &topic, &topic_len,
             &offset, &offset_len,
@@ -573,6 +641,20 @@ PHP_METHOD(Kafka, consume)
         connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
     }
     array_init(return_value);
-    kafka_consume(connection->consumer, return_value, topic, offset, count);
+    if (connection->consumer_partition == RD_KAFKA_PARTITION_UA)
+    {
+        kafka_consume_all(
+            connection->consumer,
+            return_value,
+            topic,
+            offset,
+            count
+        );
+    }
+    else
+    {
+        kafka_set_partition(connection->consumer_partition);
+        kafka_consume(connection->consumer, return_value, topic, offset, count);
+    }
 }
 /* }}} end Kafka::consume */
