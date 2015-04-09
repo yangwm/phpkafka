@@ -21,7 +21,6 @@
 #include <php_kafka.h>
 #include <inttypes.h>
 #include <ctype.h>
-#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -215,10 +214,6 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
     }
 
     //set global to current connection...
-    rk = r;
-    //for signal handling
-    signal(SIGINT, kafka_stop);
-    signal(SIGPIPE, kafka_stop);
 
     /* Topic configuration */
     topic_conf = rd_kafka_topic_conf_new();
