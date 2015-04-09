@@ -34,8 +34,9 @@
 struct consume_cb_params {
     int read_count;
     zval *return_value;
-    int partition_ends;
+    int *partition_ends;
     int error_count;
+    int eop;
 };
 
 static int log_level = 1;
@@ -235,17 +236,19 @@ void queue_consume(rd_kafka_message_t *message, void *opaque)
     struct consume_cb_params *params = opaque;
     zval *return_value = params->return_value;
     //all partitions EOF
-    if (params->partition_ends < 1)
+    if (params->eop < 1)
         return;
     //nothing more to read...
     if (params->read_count == 0)
         return;
-    params->read_count -= 1;
     if (message->err)
     {
         params->error_count += 1;
         if (message->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) {
-            params->partition_ends -= 1;
+            if (params->partition_ends[message->partition] == 0) {
+                params->eop -= 1;
+                params->partition_ends[message->partition] = 1;
+            }
             if (log_level) {
                 openlog("phpkafka", 0, LOG_USER);
                 syslog(LOG_INFO,
@@ -275,14 +278,19 @@ void queue_consume(rd_kafka_message_t *message, void *opaque)
         }
         return;
     }
+    //only count successful reads!
+    //-1 means read all from offset until end
+    if (params->read_count != -1)
+        params->read_count -= 1;
     //add message to return value (perhaps add as array -> offset + msg?
     if (message->len > 0) {
         //ensure there is a payload
         char payload[(int) message->len];
         sprintf(payload, "%.*s", (int) message->len, (char *) message->payload);
+        //add_index_string(return_value, (int) message->offset, payload, 1);
         add_next_index_string(return_value, payload, 1);
     } else {
-        add_next_index_null(return_value);
+        add_next_index_string(return_value, "", 1);
     }
 
     //store offset
@@ -479,12 +487,7 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
     int current, p, i = 0;
     int32_t partition = 0;
     int64_t start;
-    /**
-    int read_count;
-    zval *return_value;
-    int error_count;
-    */
-    struct consume_cb_params cb_params = {item_count, return_value, 0, 0};
+    struct consume_cb_params cb_params = {item_count, return_value, NULL, 0, 0};
     //check for NULL pointers, all arguments are required!
     if (rk == NULL || return_value == NULL || topic == NULL || offset == NULL || strlen(offset) == 0)
         return;
@@ -510,13 +513,28 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_INFO, "phpkafka - Failed to read %s from %"PRId64" (%s)", topic, start, offset);
         }
+        rd_kafka_topic_destroy(rkt);
         return;
     }
     rkqu = rd_kafka_queue_new(rk);
     if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(rk, 0, rkt, &meta, 5))
     {
         p = meta->topics->partition_cnt;
-        cb_params.partition_ends = p;
+        cb_params.partition_ends = calloc(sizeof *cb_params.partition_ends, p);
+        if (cb_params.partition_ends == NULL)
+        {
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_INFO, "phpkafka - Failed to read %s from %"PRId64" (%s)", topic, start, offset);
+            }
+            rd_kafka_metadata_destroy(meta);
+            meta = NULL;
+            rd_kafka_queue_destroy(rkqu);
+            rd_kafka_topic_destroy(rkt);
+            return;
+        }
+        cb_params.eop = p;
         for (i=0;i<p;++i)
         {
             partition = meta->topics[0].partitions[i].id;
@@ -533,18 +551,20 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
                 continue;
             }
         }
-        rd_kafka_consume_callback_queue(rkqu, 100, queue_consume, &cb_params);
+        while(cb_params.read_count && cb_params.eop)
+            rd_kafka_consume_callback_queue(rkqu, 200, queue_consume, &cb_params);
+        free(cb_params.partition_ends);
+        cb_params.partition_ends = NULL;
         for (i=0;i<p;++i)
         {
             partition = meta->topics[0].partitions[i].id;
             rd_kafka_consume_stop(rkt, partition);
         }
+        rd_kafka_metadata_destroy(meta);
+        meta = NULL;
         rd_kafka_queue_destroy(rkqu);
-        //read-count <> 0, not all EOF partitions, and still in queue
-        //keep polling
-        while(cb_params.read_count && cb_params.partition_ends && rd_kafka_outq_len(rk) > 0)
-            rd_kafka_poll(rk, 10);
-        //else, destroy topic.
+        while(rd_kafka_outq_len(rk) > 0)
+            rd_kafka_poll(rk, 50);
         rd_kafka_topic_destroy(rkt);
     }
     if (meta)
