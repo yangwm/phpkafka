@@ -692,7 +692,7 @@ PHP_METHOD(Kafka, consume)
     char *offset;
     int offset_len;
     long count = 0;
-    zval *item_count;
+    zval *item_count = NULL;
 
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|sz",
             &topic, &topic_len,
@@ -700,11 +700,33 @@ PHP_METHOD(Kafka, consume)
             &item_count) == FAILURE) {
         return;
     }
-    if (Z_TYPE_P(item_count) == IS_STRING && strcmp(Z_STRVAL_P(item_count), PHP_KAFKA_OFFSET_END) == 0) {
-        count = -1;
-    } else if (Z_TYPE_P(item_count) == IS_LONG) {
-        count = Z_LVAL_P(item_count);
-    } else {}//todo throw exception?
+    if (item_count == NULL || Z_TYPE_P(item_count) == IS_NULL)
+    {//default
+        count = 1;
+    }
+    else
+    {
+        if (Z_TYPE_P(item_count) == IS_STRING && strcmp(Z_STRVAL_P(item_count), PHP_KAFKA_OFFSET_END) == 0) {
+            count = -1;
+        } else if (Z_TYPE_P(item_count) == IS_LONG) {
+            count = Z_LVAL_P(item_count);
+        } else {
+
+            zend_throw_exception(
+                BASE_EXCEPTION,
+                "Invalid messageCount value passed to Kafka::consume, should be int or OFFSET constant",
+                0 TSRMLS_CC
+            );
+        }
+    }
+    if (count < -1)
+    {
+        zend_throw_exception(
+            BASE_EXCEPTION,
+            "Invalid messageCount value passed to Kafka::consume",
+            0 TSRMLS_CC
+        );
+    }
     if (!connection->consumer)
     {
         connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
