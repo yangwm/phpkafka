@@ -42,7 +42,8 @@ typedef struct _kafka_r {
     rd_kafka_t          *consumer;
     rd_kafka_t          *producer;
     char                *brokers;
-    long                partition;
+    long                consumer_partition;
+    long                producer_partition;
     rd_kafka_type_t     rk_type;
 } kafka_connection;
 
@@ -55,6 +56,7 @@ static PHP_METHOD(Kafka, __construct);
 static PHP_METHOD(Kafka, __destruct);
 static PHP_METHOD(Kafka, set_partition);
 static PHP_METHOD(Kafka, setPartition);
+static PHP_METHOD(Kafka, getPartition);
 static PHP_METHOD(Kafka, setLogLevel);
 static PHP_METHOD(Kafka, getPartitionsForTopic);
 static PHP_METHOD(Kafka, getPartitionOffsets);
