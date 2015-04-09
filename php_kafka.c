@@ -598,9 +598,6 @@ PHP_METHOD(Kafka, disconnect)
         kafka_destroy(connection->producer, 1);
     connection->producer = connection->consumer = NULL;
     connection->consumer_partition = connection->producer_partition = RD_KAFKA_PARTITION_UA;
-    if (kafka_is_connected()) {
-        RETURN_FALSE;
-    }
     RETURN_TRUE;
 }
 /* }}} end Kafka::disconnect */
@@ -628,6 +625,7 @@ PHP_METHOD(Kafka, produce)
         connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers);
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
+    //this does nothing at this stage...
     kafka_set_partition(
         (int) connection->producer_partition
     );
@@ -678,8 +676,14 @@ PHP_METHOD(Kafka, consume)
     }
     else
     {
-        kafka_set_partition(connection->consumer_partition);
-        kafka_consume(connection->consumer, return_value, topic, offset, count);
+        kafka_consume(
+            connection->consumer,
+            return_value,
+            topic,
+            offset,
+            count,
+            connection->consumer_partition
+        );
     }
 }
 /* }}} end Kafka::consume */
