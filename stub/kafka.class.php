@@ -8,21 +8,25 @@ final class Kafka
     const LOG_OFF = 0;
     const MODE_CONSUMER = 0;
     const MODE_PRODUCER = 1;
+    const PARTITION_RANDOM = -1;
 
     /**
      * This property does not exist, connection status
-     * Is obtained directly from C kafka client
+     * depends on the mode, which is stored internally
      * @var bool
      */
     private $connected = false;
 
     /**
+     * This property was removed, instead a partition is stored
+     * internally for the producer and consumer connection
      * @var int
      */
     private $partition = 0;
 
     /**
      * Not an actual property, but last active mode is tracked
+     * This value is unreliable at this point in time, so don't rely on it...
      * @var int
      */
     private $lastMode = 0;
@@ -32,32 +36,74 @@ final class Kafka
 
     /**
      * @param int $partition
+     * @param null|int $mode
      * @deprecated use setPartition instead
      * @return $this
+     * @throws \Exception
      */
-    public function set_partition($partition)
+    public function set_partition($partition, $mode = null)
     {
+        if (!is_int($partition) || ($mode !== null)) {
+            throw new \Exception('Invalid arguments passed to Kafka::set_topics');
+        }
+        if ($mode && $mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
+            throw new \Exception(
+                sprintf(
+                    'Invalid mode passed to %s, use Kafka::MODE_* constants',
+                    __METHOD__
+                )
+            );
+        }
+        if ($partition < self::PARTITION_RANDOM) {
+            throw new \Exception('Invalid partition');
+        }
         $this->partition = $partition;
         return $this;
     }
 
     /**
      * @param int $partition
+     * @param null|$mode
      * @return $this
      * @throws \Exception
      */
-    public function setPartition($partition)
+    public function setPartition($partition, $mode = null)
     {
-        if (!is_int($partition)) {
+        if (!is_int($partition) || ($mode !== null)) {
+            throw new \Exception('Invalid arguments passed to Kafka::set_topics');
+        }
+        if ($mode && $mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
             throw new \Exception(
                 sprintf(
-                    '%s expects argument to be an int',
+                    'Invalid mode passed to %s, use Kafka::MODE_* constants',
+                    __METHOD__
+                )
+            );
+        }
+        if ($partition < self::PARTITION_RANDOM) {
+            throw new \Exception('Invalid partition');
+        }
+        $this->partition = $partition;
+        return $this;
+    }
+
+    /**
+     * @param int $mode
+     * @return int
+     * @throws Exception
+     */
+    public function getPartition($mode)
+    {
+        if ($mode != self::MODE_CONSUMER && $mode != self::MODE_PRODUCER) {
+            throw new \Exception(
+                sprintf(
+                    'Invalid argument passed to %s, use %s::MODE_* constants',
+                    __METHOD__,
                     __CLASS__
                 )
             );
         }
-        $this->partition = $partition;
-        return $this;
+        return $this->partition;
     }
 
     /**
