@@ -26,25 +26,71 @@
 #include "kafka.h"
 #include "zend_exceptions.h"
 
+/* {{{ arginfo */
+ZEND_BEGIN_ARG_INFO(arginf_kafka__constr, 0)
+    ZEND_ARG_INFO(0, brokers)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_set_partition, 0, 0, 1)
+    ZEND_ARG_INFO(0, partition)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_set_log_level, 0)
+    ZEND_ARG_INFO(0, logLevel)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_get_partitions_for_topic, 0)
+    ZEND_ARG_INFO(0, topic)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_set_get_partition, 0)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
+    ZEND_ARG_INFO(0, topic)
+    ZEND_ARG_INFO(0, message)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 1)
+    ZEND_ARG_INFO(0, topic)
+    ZEND_ARG_INFO(0, offset)
+    ZEND_ARG_INFO(0, messageCount)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_is_conn, 0, 0, 0)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_void, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_disconnect, 0, 0, 0)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+
+/* }}} end arginfo */
+
 /* decalre the class entry */
 zend_class_entry *kafka_ce;
 /* the method table */
 /* each method can have its own parameters and visibility */
 static zend_function_entry kafka_functions[] = {
-    PHP_ME(Kafka, __construct, NULL, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, __destruct, NULL, ZEND_ACC_DTOR | ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, set_partition, NULL, ZEND_ACC_PUBLIC|ZEND_ACC_DEPRECATED)
-    PHP_ME(Kafka, setPartition, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, getPartition, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, setLogLevel, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, getPartitionsForTopic, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, getPartitionOffsets, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, setBrokers, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, getTopics, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, disconnect, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, isConnected, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, produce, NULL, ZEND_ACC_PUBLIC)
-    PHP_ME(Kafka, consume, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, __construct, arginf_kafka__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, __destruct, arginf_kafka_void, ZEND_ACC_DTOR | ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, set_partition, arginf_kafka_set_partition, ZEND_ACC_PUBLIC|ZEND_ACC_DEPRECATED)
+    PHP_ME(Kafka, setPartition, arginf_kafka_set_partition, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getPartition, arginf_kafka_set_get_partition, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setLogLevel, arginf_kafka_set_log_level, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getPartitionsForTopic, arginf_kafka_get_partitions_for_topic, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getPartitionOffsets, arginf_kafka_get_partitions_for_topic, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setBrokers, arginf_kafka__constr, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getTopics, arginf_kafka_void, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, disconnect, arginf_kafka_disconnect, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, isConnected, arginf_kafka_is_conn, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, produce, arginf_kafka_produce, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, consume, arginf_kafka_consume, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL} /* Marks the end of function entries */
 };
 
@@ -448,7 +494,7 @@ PHP_METHOD(Kafka, getTopics)
 }
 /* }}} end Kafka::getTopics */
 
-/* {{{ proto Kafka Kafka::setBrokers ( string $brokers)
+/* {{{ proto Kafka Kafka::setBrokers ( string $brokers )
     Set brokers on-the-fly
 */
 PHP_METHOD(Kafka, setBrokers)
