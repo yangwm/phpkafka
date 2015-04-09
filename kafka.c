@@ -551,9 +551,8 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
                 continue;
             }
         }
-        rd_kafka_consume_callback_queue(rkqu, 200, queue_consume, &cb_params);
-        while(cb_params.read_count && cb_params.eop && rd_kafka_outq_len(rk) > 0)
-            rd_kafka_poll(rk, 50);
+        while(cb_params.read_count && cb_params.eop)
+            rd_kafka_consume_callback_queue(rkqu, 200, queue_consume, &cb_params);
         free(cb_params.partition_ends);
         cb_params.partition_ends = NULL;
         for (i=0;i<p;++i)
@@ -564,9 +563,8 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
         rd_kafka_metadata_destroy(meta);
         meta = NULL;
         rd_kafka_queue_destroy(rkqu);
-        //read-count <> 0, not all EOF partitions, and still in queue
-        //keep polling
-        //else, destroy topic.
+        while(rd_kafka_outq_len(rk) > 0)
+            rd_kafka_poll(rk, 50);
         rd_kafka_topic_destroy(rkt);
     }
     if (meta)
