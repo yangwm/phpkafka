@@ -90,7 +90,9 @@ void kafka_err_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque)
         syslog(LOG_INFO, "phpkafka - ERROR CALLBACK: %s: %s: %s\n",
             rd_kafka_name(rk), rd_kafka_err2str(err), reason);
     }
-    kafka_stop(err);
+    run = 0;
+    fclose(stdin);
+    rd_kafka_destroy(rk);
 }
 
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b)
@@ -139,7 +141,7 @@ void kafka_setup(char* brokers_list)
 
 void kafka_destroy(rd_kafka_t *r, int timeout)
 {
-    if (r == NULL || (void *)r == (void *)rk)
+    if (r == NULL || (r && (void *)r == (void *)rk))
     {//NULL passed, or r == global pointer variable
         r = rk;
         rk = NULL;
@@ -153,10 +155,11 @@ void kafka_destroy(rd_kafka_t *r, int timeout)
     }
 }
 
+//We're no longer relying on the global rk variable (not thread-safe)
 static void kafka_init( rd_kafka_type_t type )
 {
     if (rk_type != type) {
-        kafka_destroy(NULL, 1);
+        kafka_destroy(rk, 1);
     }
     if (rk == NULL)
     {
@@ -193,18 +196,26 @@ static void kafka_init( rd_kafka_type_t type )
 void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
 {
 
-    signal(SIGINT, kafka_stop);
-    signal(SIGPIPE, kafka_stop);
-
     rd_kafka_topic_t *rkt;
     int partition = RD_KAFKA_PARTITION_UA;
 
     rd_kafka_topic_conf_t *topic_conf;
 
-    if (r == NULL) {
-        kafka_init(RD_KAFKA_PRODUCER);
-        r = rk;
+    if (r == NULL)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "phpkafka - no connection to produce to topic: %s", topic);
+        }
+        return;
     }
+
+    //set global to current connection...
+    rk = r;
+    //for signal handling
+    signal(SIGINT, kafka_stop);
+    signal(SIGPIPE, kafka_stop);
 
     /* Topic configuration */
     topic_conf = rd_kafka_topic_conf_new();
@@ -240,6 +251,8 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
     while (run && rd_kafka_outq_len(r) > 0)
       rd_kafka_poll(r, 10);
 
+    //set global to NULL again
+    rk = NULL;
     rd_kafka_topic_destroy(rkt);
 }
 
@@ -286,11 +299,19 @@ void queue_consume(rd_kafka_message_t *message, void *opaque)
                 message->offset,
                 rd_kafka_message_errstr(message)
             );
-            return;
         }
+        return;
     }
     //add message to return value (perhaps add as array -> offset + msg?
-    add_next_index_string(return_value, rd_kafka_message_errstr(message), 1);
+    if (message->len > 0) {
+        //ensure there is a payload
+        char payload[(int) message->len];
+        sprintf(payload, "%.*s", (int) message->len, (char *) message->payload);
+        add_next_index_string(return_value, payload, 1);
+    } else {
+        add_next_index_null(return_value);
+    }
+
     //store offset
     rd_kafka_offset_store(
         message->rkt,
@@ -339,8 +360,12 @@ void kafka_get_topics(rd_kafka_t *r, zval *return_value)
     const struct rd_kafka_metadata *meta = NULL;
     if (r == NULL)
     {
-        kafka_init(RD_KAFKA_CONSUMER);
-        r = rk;
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "phpkafka - no connection to get topics");
+        }
+        return;
     }
     if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 1, NULL, &meta, 200)) {
         for (i=0;i<meta->topic_cnt;++i) {
@@ -365,8 +390,12 @@ int kafka_partition_count(rd_kafka_t *r, const char *topic)
     //connect as consumer if required
     if (r == NULL)
     {
-        kafka_init(RD_KAFKA_CONSUMER);
-        r = rk;
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "phpkafka - no connection to get partition count for topic: %s", topic);
+        }
+        return -1;
     }
     /* Topic configuration */
     conf = rd_kafka_topic_conf_new();
@@ -388,6 +417,9 @@ int kafka_partition_count(rd_kafka_t *r, const char *topic)
 //get the available partitions for a given topic
 void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic)
 {
+    //we need a connection!
+    if (r == NULL)
+        return;
     int i, count = kafka_partition_count(r, topic);
     for (i=0;i<count;++i) {
         add_next_index_long(return_value, i);
@@ -411,8 +443,12 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
     //connect as consumer if required
     if (r == NULL)
     {
-        kafka_init(RD_KAFKA_CONSUMER);
-        r = rk;
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "phpkafka - no connection to get offsets of topic: %s", topic);
+        }
+        return;
     }
     /* Topic configuration */
     conf = rd_kafka_topic_conf_new();
@@ -561,8 +597,12 @@ void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset,
 
     if (r == NULL)
     {
-        kafka_init(RD_KAFKA_CONSUMER);
-        r = rk;
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "phpkafka - no connection to consume from topic: %s", topic);
+        }
+        return;
     }
 
     rd_kafka_topic_conf_t *topic_conf;
