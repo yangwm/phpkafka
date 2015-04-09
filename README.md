@@ -14,10 +14,12 @@ Changes that have happened thusfar:
 * Argument checks were added, and exceptions are thrown in some places
 * Class constants for an easier API (`Kafka::OFFSET_*`)
 * The extension logged everything in `/var/etc/syslog`, this is still the default behaviour (as this extension is under development), but can be turned off (`Kafka::setLogLevel(Kafka::LOG_OFF)`)
+* Exceptions (`KafkaException`) in case of errors (still work in progress, though)
+* Thread-safe Kafka connections
 
 Changes that are on the _TODO_ list include:
 
-* Separating kafka meta information out into a separate class
+* Separating kafka meta information out into a separate class (`KafkaTopic`  and `KafkaMessage` classes)
 * Support for multiple kafka connections
 * Allow PHP to determine what the timeouts should be (mainly when disconnecting, or producing messages)
 * Add custom exceptions
@@ -25,16 +27,13 @@ Changes that are on the _TODO_ list include:
 * Performance!
 * CI (travis)
 * Adding tests to the build
+* PHP7 support
 
 All help is welcome, of course...
 
-phpkafka
-========
-
-**Note: The library is not supported by author anymore. Please check other forks or make your own.**
 
 PHP extension for **Apache Kafka 0.8**. It's built on top of kafka C driver ([librdkafka](https://github.com/edenhill/librdkafka/)).
-It makes persistent connection to kafka broker with non-blocking calls, so it should be very fast.
+This extension requires the version 0.8.6 (ubuntu's librdkafka packages won't do it, they do not implement the meta API yet).
 
 IMPORTANT: Library is in heavy development and some features are not implemented yet.
 
@@ -60,5 +59,12 @@ Examples:
 // Produce a message
 $kafka = new Kafka("localhost:9092");
 $kafka->produce("topic_name", "message content");
-$kafka->consume("topic_name", 1172556);
+//get all the available partitions
+$partitions = $kafka->getPartitionsForTopic('topic_name');
+//use it to OPTIONALLY specify a partition to consume from
+//if not, consuming IS slower. To set the partition:
+$kafka->setPartition($partitions[0]);//set to first partition
+//then consume, for example, starting with the first offset, consume 20 messages
+$msg = $kafka->consume("topic_name", Kafka::OFFSET_BEGIN, 20);
+var_dump($msg);//dumps array of messages
 ```
