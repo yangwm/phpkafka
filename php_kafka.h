@@ -56,6 +56,7 @@ static PHP_METHOD(Kafka, __construct);
 static PHP_METHOD(Kafka, __destruct);
 static PHP_METHOD(Kafka, set_partition);
 static PHP_METHOD(Kafka, setPartition);
+static PHP_METHOD(Kafka, getPartition);
 static PHP_METHOD(Kafka, setLogLevel);
 static PHP_METHOD(Kafka, getPartitionsForTopic);
 static PHP_METHOD(Kafka, getPartitionOffsets);

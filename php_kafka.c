@@ -32,6 +32,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, __destruct, NULL, ZEND_ACC_DTOR | ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, set_partition, NULL, ZEND_ACC_PUBLIC|ZEND_ACC_DEPRECATED)
     PHP_ME(Kafka, setPartition, NULL, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getPartition, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, setLogLevel, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartitionsForTopic, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartitionOffsets, NULL, ZEND_ACC_PUBLIC)
@@ -398,6 +399,27 @@ PHP_METHOD(Kafka, setPartition)
     RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::setPartition */
+
+/* {{{ proto int Kafka::getPartition( int $mode )
+    Get partition for connection (consumer/producer)
+*/
+PHP_METHOD(Kafka, getPartition)
+{
+    zval *obj = getThis(),
+        *arg = NULL;
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &arg) == FAILURE)
+        return;
+    if (Z_TYPE_P(arg) != IS_LONG || (Z_LVAL_P(arg) != PHP_KAFKA_MODE_CONSUMER && Z_LVAL_P(arg) != PHP_KAFKA_MODE_PRODUCER))
+    {
+        zend_throw_exception(BASE_EXCEPTION, "Invalid argument passed to Kafka::getPartition, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    if (Z_LVAL_P(arg) == PHP_KAFKA_MODE_CONSUMER)
+        RETURN_LONG(connection->consumer_partition);
+    RETURN_LONG(connection->producer_partition);
+}
+/* }}} end proto Kafka::getPartition */
 
 /* {{{ proto array Kafka::getTopics( void )
     Get all existing topics
