@@ -1,4 +1,4 @@
-## MAin dev-branch is here!
+## Main dev-branch is here!
 
 This is, currently, the main development branch for this fork. To build the extension, nothing much has changed.
 However, this extension now relies on the meta API of librdkafka. Given that some systems have packaged this lib, it is important to ensure that your package is up-to-date.
@@ -43,8 +43,12 @@ Examples:
 // Produce a message
 $kafka = new Kafka("localhost:9092");
 $kafka->produce("topic_name", "message content");
-$partition = 1;//specify the partition somehow
-//the partition needs to be set, or the consume method will cause a fatal error (C code: exit(1);)
-$kafka->setPartition($partition);
-$kafka->consume("topic_name", 1172556);
+//get all the available partitions
+$partitions = $kafka->getPartitionsForTopic('topic_name');
+//use it to OPTIONALLY specify a partition to consume from
+//if not, consuming IS slower. To set the partition:
+$kafka->setPartition($partitions[0]);//set to first partition
+//then consume, for example, starting with the first offset, consume 20 messages
+$msg = $kafka->consume("topic_name", Kafka::OFFSET_BEGIN, 20);
+var_dump($msg);//dumps array of messages
 ```
