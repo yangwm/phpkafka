@@ -21,7 +21,6 @@
 #include <php_kafka.h>
 #include <inttypes.h>
 #include <ctype.h>
-#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -39,13 +38,10 @@ struct consume_cb_params {
     int error_count;
 };
 
-static int run = 1;
 static int log_level = 1;
-static rd_kafka_t *rk;
+static rd_kafka_t *rk = NULL;
 static rd_kafka_type_t rk_type;
-static int exit_eof = 1; //Exit consumer when last message
 char *brokers = "localhost:9092";
-int64_t start_offset = 0;
 int partition = RD_KAFKA_PARTITION_UA;
 
 void kafka_connect(char *brokers)
@@ -56,14 +52,6 @@ void kafka_connect(char *brokers)
 void kafka_set_log_level( int ll )
 {
     log_level = ll;
-}
-
-//return 1 if rd is not NULL
-int kafka_is_connected( void )
-{
-    if (rk == NULL)
-        return 0;
-    return 1;
 }
 
 void kafka_msg_delivered (rd_kafka_t *rk,
@@ -78,14 +66,6 @@ void kafka_msg_delivered (rd_kafka_t *rk,
     }
 }
 
-void kafka_stop(int sig)
-{
-    run = 0;
-    fclose(stdin); /* abort fgets() */
-    rd_kafka_destroy(rk);
-    rk = NULL;
-}
-
 void kafka_err_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque)
 {
     if (log_level) {
@@ -93,9 +73,8 @@ void kafka_err_cb (rd_kafka_t *rk, int err, const char *reason, void *opaque)
         syslog(LOG_INFO, "phpkafka - ERROR CALLBACK: %s: %s: %s\n",
             rd_kafka_name(rk), rd_kafka_err2str(err), reason);
     }
-    run = 0;
-    fclose(stdin);
-    rd_kafka_destroy(rk);
+    if (rk)
+        rd_kafka_destroy(rk);
 }
 
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b)
@@ -144,11 +123,6 @@ void kafka_setup(char* brokers_list)
 
 void kafka_destroy(rd_kafka_t *r, int timeout)
 {
-    if (r == NULL || (r && (void *)r == (void *)rk))
-    {//NULL passed, or r == global pointer variable
-        r = rk;
-        rk = NULL;
-    }
     if(r != NULL) {
         rd_kafka_destroy(r);
         //this wait is blocking PHP
@@ -161,8 +135,10 @@ void kafka_destroy(rd_kafka_t *r, int timeout)
 //We're no longer relying on the global rk variable (not thread-safe)
 static void kafka_init( rd_kafka_type_t type )
 {
-    if (rk_type != type) {
-        kafka_destroy(rk, 1);
+    if (rk && type != rk_type)
+    {
+        rd_kafka_destroy(rk);
+        rk = NULL;
     }
     if (rk == NULL)
     {
@@ -215,10 +191,6 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
     }
 
     //set global to current connection...
-    rk = r;
-    //for signal handling
-    signal(SIGINT, kafka_stop);
-    signal(SIGPIPE, kafka_stop);
 
     /* Topic configuration */
     topic_conf = rd_kafka_topic_conf_new();
@@ -244,18 +216,16 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
                rd_kafka_err2str(
                rd_kafka_errno2err(errno)));
         }
-        rd_kafka_poll(r, 1);
     }
 
     /* Poll to handle delivery reports */
     rd_kafka_poll(r, 1);
 
     /* Wait for messages to be delivered */
-    while (run && rd_kafka_outq_len(r) > 0)
+    while (rd_kafka_outq_len(r) > 0)
       rd_kafka_poll(r, 10);
 
     //set global to NULL again
-    rk = NULL;
     rd_kafka_topic_destroy(rkt);
 }
 
@@ -326,6 +296,7 @@ void queue_consume(rd_kafka_message_t *message, void *opaque)
 static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
        void *opaque)
 {
+    int *run = opaque;
     if (rkmessage->err) {
         if (rkmessage->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) {
             if (log_level) {
@@ -336,8 +307,7 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
                     rd_kafka_topic_name(rkmessage->rkt),
                     rkmessage->partition, rkmessage->offset);
             }
-            if (exit_eof)
-                run = 0;
+            *run = 0;
             return NULL;
         }
         if (log_level) {
@@ -581,11 +551,11 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
         rd_kafka_metadata_destroy(meta);
 }
 
-void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count)
+void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count, int partition)
 {
-
+    int64_t start_offset = 0;
   int read_counter = 0;
-
+    int run = 1;
   if (strlen(offset) != 0) {
     if (!strcmp(offset, "end"))
       start_offset = RD_KAFKA_OFFSET_END;
@@ -657,7 +627,7 @@ void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset,
         continue;
 
       rd_kafka_message_t *rkmessage_return;
-      rkmessage_return = msg_consume(rkmessage, NULL);
+      rkmessage_return = msg_consume(rkmessage, &run);
       if (rkmessage_return != NULL) {
           if ((int) rkmessage_return->len > 0) {
               //ensure there is a payload
