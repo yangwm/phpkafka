@@ -173,7 +173,7 @@ static void kafka_init( rd_kafka_type_t type )
     }
 }
 
-void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
+int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
 {
 
     rd_kafka_topic_t *rkt;
@@ -188,7 +188,7 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_ERR, "phpkafka - no connection to produce to topic: %s", topic);
         }
-        return;
+        return -2;
     }
 
     //set global to current connection...
@@ -217,6 +217,7 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
                rd_kafka_err2str(
                rd_kafka_errno2err(errno)));
         }
+       return -1;
     }
 
     /* Poll to handle delivery reports */
@@ -228,6 +229,7 @@ void kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
 
     //set global to NULL again
     rd_kafka_topic_destroy(rkt);
+    return 0;
 }
 
 static
