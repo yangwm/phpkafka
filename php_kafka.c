@@ -116,7 +116,8 @@ ZEND_GET_MODULE(kafka)
     zend_declare_class_constant_stringl(ce, name, sizeof(name)-1, value, sizeof(value)-1)
 #define REGISTER_KAFKA_CLASS_CONST_LONG(ce, name, value) \
     zend_declare_class_constant_long(ce, name, sizeof(name)-1, value)
-
+#define REGISTER_KAFKA_CLASS_CONST(ce, c_name, type) \
+    REGISTER_KAFKA_CLASS_CONST_ ## type(ce, #c_name, PHP_KAFKA_ ## c_name)
 #ifndef BASE_EXCEPTION
 #if (PHP_MAJOR_VERSION < 5) || ( ( PHP_MAJOR_VERSION == 5 ) && (PHP_MINOR_VERSION < 2) )
 #define BASE_EXCEPTION zend_exception_get_default()
@@ -146,13 +147,13 @@ PHP_MINIT_FUNCTION(kafka)
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
-    REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_BEGIN", PHP_KAFKA_OFFSET_BEGIN);
-    REGISTER_KAFKA_CLASS_CONST_STRING(kafka_ce, "OFFSET_END", PHP_KAFKA_OFFSET_END);
-    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_ON", PHP_KAFKA_LOGLEVEL_ON);
-    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "LOG_OFF", PHP_KAFKA_LOGLEVEL_OFF);
-    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "MODE_CONSUMER", PHP_KAFKA_MODE_CONSUMER);
-    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "MODE_PRODUCER", PHP_KAFKA_MODE_PRODUCER);
-    REGISTER_KAFKA_CLASS_CONST_LONG(kafka_ce, "PARTITION_RANDOM", -1);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_BEGIN, STRING);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_END, STRING);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOG_ON, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOG_OFF, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, MODE_CONSUMER, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, MODE_PRODUCER, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, PARTITION_RANDOM, LONG);
     return SUCCESS;
 }
 PHP_RSHUTDOWN_FUNCTION(kafka) { return SUCCESS; }
@@ -171,8 +172,8 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
     intern = emalloc(sizeof *intern);
     memset(intern, 0, sizeof *intern);
     //init partitions to random partitions
-    intern->consumer_partition = RD_KAFKA_PARTITION_UA;
-    intern->producer_partition = RD_KAFKA_PARTITION_UA;
+    intern->consumer_partition = PHP_KAFKA_PARTITION_RANDOM;
+    intern->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
 
     zend_object_std_init(&intern->std, class_type TSRMLS_CC);
     //add properties table
@@ -311,7 +312,7 @@ PHP_METHOD(Kafka, __destruct)
     connection->producer    = NULL;
     connection->brokers     = NULL;
     connection->consumer    = NULL;
-    connection->consumer_partition = connection->producer_partition = RD_KAFKA_PARTITION_UA;
+    connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
 }
 /* }}} end Kafka::__destruct */
 
@@ -355,7 +356,7 @@ PHP_METHOD(Kafka, set_partition)
         );
         return;
     }
-    p_value = p_value == -1 ? RD_KAFKA_PARTITION_UA : p_value;
+    p_value = p_value == -1 ? PHP_KAFKA_PARTITION_RANDOM : p_value;
     if (!mode)
     {
         connection->consumer_partition = p_value;
@@ -389,9 +390,9 @@ PHP_METHOD(Kafka, setLogLevel)
         return;
     }
     if (
-        Z_LVAL_P(log_level) != PHP_KAFKA_LOGLEVEL_ON
+        Z_LVAL_P(log_level) != PHP_KAFKA_LOG_ON
         &&
-        Z_LVAL_P(log_level) != PHP_KAFKA_LOGLEVEL_OFF
+        Z_LVAL_P(log_level) != PHP_KAFKA_LOG_OFF
     ) {
         zend_throw_exception(kafka_exception, "Invalid argument, use Kafka::LOG_* constants", 0 TSRMLS_CC);
         return;
@@ -439,7 +440,7 @@ PHP_METHOD(Kafka, setPartition)
         );
         return;
     }
-    p_value = p_value == -1 ? RD_KAFKA_PARTITION_UA : p_value;
+    p_value = p_value == -1 ? PHP_KAFKA_PARTITION_RANDOM : p_value;
     if (!mode)
     {
         connection->consumer_partition = p_value;
@@ -534,7 +535,7 @@ PHP_METHOD(Kafka, setBrokers)
         kafka_connect(connection->brokers);
         //reinit to NULL
         connection->producer = connection->consumer = NULL;
-        connection->consumer_partition = connection->producer_partition = RD_KAFKA_PARTITION_UA;
+        connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
     }
     //set kafka to latest brokers string
     kafka_connect(Z_STRVAL_P(brokers));
@@ -652,7 +653,7 @@ PHP_METHOD(Kafka, disconnect)
     if (connection->producer)
         kafka_destroy(connection->producer, 1);
     connection->producer = connection->consumer = NULL;
-    connection->consumer_partition = connection->producer_partition = RD_KAFKA_PARTITION_UA;
+    connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
     RETURN_TRUE;
 }
 /* }}} end Kafka::disconnect */
@@ -752,7 +753,7 @@ PHP_METHOD(Kafka, consume)
         connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
     }
     array_init(return_value);
-    if (connection->consumer_partition == RD_KAFKA_PARTITION_UA)
+    if (connection->consumer_partition == PHP_KAFKA_PARTITION_RANDOM)
     {
         kafka_consume_all(
             connection->consumer,

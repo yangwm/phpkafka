@@ -23,8 +23,8 @@
 #define PHP_KAFKA_EXTNAME "kafka"
 #define PHP_KAFKA_OFFSET_BEGIN "beginning"
 #define PHP_KAFKA_OFFSET_END "end"
-#define PHP_KAFKA_LOGLEVEL_ON 1
-#define PHP_KAFKA_LOGLEVEL_OFF 0
+#define PHP_KAFKA_LOG_ON 1
+#define PHP_KAFKA_LOG_OFF 0
 #define PHP_KAFKA_MODE_CONSUMER 0
 #define PHP_KAFKA_MODE_PRODUCER 1
 
@@ -40,6 +40,7 @@ PHP_RSHUTDOWN_FUNCTION(kafka);
 #endif
 #include "librdkafka/rdkafka.h"
 
+#define PHP_KAFKA_PARTITION_RANDOM RD_KAFKA_PARTITION_UA
 typedef struct _kafka_r {
     zend_object         std;
     rd_kafka_t          *consumer;
