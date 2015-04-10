@@ -667,8 +667,10 @@ PHP_METHOD(Kafka, produce)
     GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     char *msg;
-    int topic_len;
-    int msg_len;
+    int topic_len,
+        msg_len,
+        status = 0;
+
 
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss",
             &topic, &topic_len,
@@ -684,7 +686,16 @@ PHP_METHOD(Kafka, produce)
     kafka_set_partition(
         (int) connection->producer_partition
     );
-    kafka_produce(connection->producer, topic, msg, msg_len);
+    status = kafka_produce(connection->producer, topic, msg, msg_len);
+    switch (status)
+    {
+        case -1:
+            zend_throw_exception(kafka_exception, "Failed to produce message", 0 TSRMLS_CC);
+            return;
+        case -2:
+            zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
+            return;
+    }
     RETURN_ZVAL(object, 1, 0);
 }
 /* }}} end Kafka::produce */

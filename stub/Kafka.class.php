@@ -180,11 +180,13 @@ final class Kafka
      * @param string $topic
      * @param string $message
      * @return $this
+     * @throws \KafkaException
      */ 
     public function produce($topic, $message)
     {
         $this->connected = true;
         //internal call, produce message on topic
+        //or throw exception
         return $this;
     }
 
