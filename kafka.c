@@ -37,6 +37,7 @@ struct consume_cb_params {
     int *partition_ends;
     int error_count;
     int eop;
+    int auto_commit;
 };
 
 static int log_level = 1;
@@ -246,12 +247,23 @@ void queue_consume(rd_kafka_message_t *message, void *opaque)
     if (message->err)
     {
         params->error_count += 1;
-        if (message->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) {
-            if (params->partition_ends[message->partition] == 0) {
+        //if auto-commit is disabled:
+        if (params->auto_commit == 0)
+            //store offset
+            rd_kafka_offset_store(
+                message->rkt,
+                message->partition,
+                message->offset == 0 ? 0 : message->offset -1
+            );
+        if (message->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+        {
+            if (params->partition_ends[message->partition] == 0)
+            {
                 params->eop -= 1;
                 params->partition_ends[message->partition] = 1;
             }
-            if (log_level) {
+            if (log_level)
+            {
                 openlog("phpkafka", 0, LOG_USER);
                 syslog(LOG_INFO,
                     "phpkafka - %% Consumer reached end of %s [%"PRId32"] "
@@ -259,16 +271,11 @@ void queue_consume(rd_kafka_message_t *message, void *opaque)
                     rd_kafka_topic_name(message->rkt),
                     message->partition, message->offset);
             }
-            //store offset
-            rd_kafka_offset_store(
-                message->rkt,
-                message->partition,
-                message->offset == 0 ? 0 : message->offset-1
-            );
             return;
         }
         //add_next_index_string(return_value, rd_kafka_message_errstr(message), 1);
-        if (log_level) {
+        if (log_level)
+        {
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_INFO, "phpkafka - %% Consume error for topic \"%s\" [%"PRId32"] "
                 "offset %"PRId64": %s\n",
@@ -295,12 +302,13 @@ void queue_consume(rd_kafka_message_t *message, void *opaque)
         add_next_index_string(return_value, "", 1);
     }
 
-    //store offset
-    rd_kafka_offset_store(
-        message->rkt,
-        message->partition,
-        message->offset == 0 ? 0 : message->offset-1
-    );
+    //store offset if autocommit is disabled
+    if (params->auto_commit == 0)
+        rd_kafka_offset_store(
+            message->rkt,
+            message->partition,
+            message->offset
+        );
 }
 
 static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
@@ -486,6 +494,7 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
 
 void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, const char *offset, int item_count)
 {
+    char errstr[512];
     rd_kafka_topic_t *rkt;
     rd_kafka_topic_conf_t *conf;
     const struct rd_kafka_metadata *meta = NULL;
@@ -493,7 +502,7 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
     int current, p, i = 0;
     int32_t partition = 0;
     int64_t start;
-    struct consume_cb_params cb_params = {item_count, return_value, NULL, 0, 0};
+    struct consume_cb_params cb_params = {item_count, return_value, NULL, 0, 0, 0};
     //check for NULL pointers, all arguments are required!
     if (rk == NULL || return_value == NULL || topic == NULL || offset == NULL || strlen(offset) == 0)
         return;
@@ -510,6 +519,23 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
     /* Topic configuration */
     conf = rd_kafka_topic_conf_new();
 
+    /* Disable autocommit, queue_consume sets offsets automatically */
+    if (rd_kafka_topic_conf_set(conf, "auto.commit.enable", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(
+                LOG_WARNING,
+                "failed to turn autocommit off consuming %d messages (start offset %"PRId64") from topic %s: %s",
+                item_count,
+                start,
+                topic,
+                errstr
+            );
+        }
+        cb_params.auto_commit = 1;
+    }
     /* Create topic */
     rkt = rd_kafka_topic_new(rk, topic, conf);
     if (!rkt)
@@ -519,7 +545,6 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_INFO, "phpkafka - Failed to read %s from %"PRId64" (%s)", topic, start, offset);
         }
-        rd_kafka_topic_destroy(rkt);
         return;
     }
     rkqu = rd_kafka_queue_new(rk);
