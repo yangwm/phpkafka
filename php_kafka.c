@@ -53,7 +53,7 @@ ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
     ZEND_ARG_INFO(0, message)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 1)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 2)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, offset)
     ZEND_ARG_INFO(0, messageCount)
@@ -517,28 +517,31 @@ PHP_METHOD(Kafka, setBrokers)
             &brokers) == FAILURE) {
         return;
     }
-    if (Z_TYPE_P(brokers) != IS_STRING) {
-        zend_throw_exception(kafka_exception, "Kafka::setBrokers expects argument to be a string", 0 TSRMLS_CC);
+    if (Z_TYPE_P(brokers) != IS_STRING || Z_STRLEN_P(brokers) == 0) {
+        zend_throw_exception(kafka_exception, "Kafka::setBrokers expects argument to be a non-empty string", 0 TSRMLS_CC);
         return;
     }
     if (connection->consumer)
         kafka_destroy(connection->consumer, 1);
     if (connection->producer)
         kafka_destroy(connection->producer, 1);
+    //free previous brokers value, if any
     if (connection->brokers)
-    {//previous connections are possible
         efree(connection->brokers);
-        //set brokers
-        connection->brokers = estrdup(
-            Z_STRVAL_P(brokers)
-        );
-        kafka_connect(connection->brokers);
-        //reinit to NULL
-        connection->producer = connection->consumer = NULL;
-        connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
-    }
-    //set kafka to latest brokers string
-    kafka_connect(Z_STRVAL_P(brokers));
+    //set brokers
+    connection->brokers = estrdup(
+        Z_STRVAL_P(brokers)
+    );
+    //reinit to NULL
+    connection->producer = connection->consumer = NULL;
+    //restore partitions back to random...
+    connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
+    //set brokers member to correct value
+    //we can ditch this call, I think...
+    kafka_connect(
+        connection->brokers
+    );
+    //return
     RETURN_ZVAL(obj, 1, 0);
 }
 /* }}} end Kafka::setBrokers */
@@ -701,7 +704,7 @@ PHP_METHOD(Kafka, produce)
 }
 /* }}} end Kafka::produce */
 
-/* {{{ proto array Kafka::consume( string $topic, [ mixed $offset = 0 [, int $length = 1] ] );
+/* {{{ proto array Kafka::consume( string $topic, [ string $offset = 0 [, mixed $length = 1] ] );
     Consumes 1 or more ($length) messages from the $offset (default 0)
 */
 PHP_METHOD(Kafka, consume)
@@ -711,11 +714,11 @@ PHP_METHOD(Kafka, consume)
     char *topic;
     int topic_len;
     char *offset;
-    int offset_len;
+    int offset_len, status = 0;
     long count = 0;
     zval *item_count = NULL;
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|sz",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|z",
             &topic, &topic_len,
             &offset, &offset_len,
             &item_count) == FAILURE) {
@@ -740,7 +743,7 @@ PHP_METHOD(Kafka, consume)
             );
         }
     }
-    if (count < -1)
+    if (count < -1 || count == 0)
     {
         zend_throw_exception(
             kafka_exception,
@@ -765,7 +768,7 @@ PHP_METHOD(Kafka, consume)
     }
     else
     {
-        kafka_consume(
+        status = kafka_consume(
             connection->consumer,
             return_value,
             topic,
@@ -773,6 +776,41 @@ PHP_METHOD(Kafka, consume)
             count,
             connection->consumer_partition
         );
+        if (status)
+        {
+            switch (status)
+            {
+                case -1:
+                    zend_throw_exception(
+                        kafka_exception,
+                        "Invalid offset passed, use Kafka::OFFSET_* constants, or positive integer!",
+                        0 TSRMLS_CC
+                    );
+                    return;
+                case -2:
+                    zend_throw_exception(
+                        kafka_exception,
+                        "No kafka connection available",
+                        0 TSRMLS_CC
+                    );
+                    return;
+                case -3:
+                    zend_throw_exception(
+                        kafka_exception,
+                        "Unable to access topic",
+                        0 TSRMLS_CC
+                    );
+                    return;
+                case -4:
+                default:
+                    zend_throw_exception(
+                        kafka_exception,
+                        "Consuming from topic failed",
+                        0 TSRMLS_CC
+                    );
+                    return;
+            }
+        }
     }
 }
 /* }}} end Kafka::consume */
