@@ -307,9 +307,13 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
        void *opaque)
 {
     int *run = opaque;
-    if (rkmessage->err) {
-        if (rkmessage->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) {
-            if (log_level) {
+    if (rkmessage->err)
+    {
+        *run = 0;
+        if (rkmessage->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+        {
+            if (log_level)
+            {
                 openlog("phpkafka", 0, LOG_USER);
                 syslog(LOG_INFO,
                     "phpkafka - %% Consumer reached end of %s [%"PRId32"] "
@@ -317,10 +321,10 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
                     rd_kafka_topic_name(rkmessage->rkt),
                     rkmessage->partition, rkmessage->offset);
             }
-            *run = 0;
             return NULL;
         }
-        if (log_level) {
+        if (log_level)
+        {
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_INFO, "phpkafka - %% Consume error for topic \"%s\" [%"PRId32"] "
                 "offset %"PRId64": %s\n",
@@ -329,8 +333,8 @@ static rd_kafka_message_t *msg_consume(rd_kafka_message_t *rkmessage,
                 rkmessage->offset,
                 rd_kafka_message_errstr(rkmessage)
             );
-            return NULL;
         }
+        return NULL;
     }
 
     return rkmessage;
@@ -573,21 +577,30 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
         rd_kafka_metadata_destroy(meta);
 }
 
-void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count, int partition)
+int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count, int partition)
 {
     int64_t start_offset = 0;
-  int read_counter = 0;
-    int run = 1;
-  if (strlen(offset) != 0) {
-    if (!strcmp(offset, "end"))
-      start_offset = RD_KAFKA_OFFSET_END;
-    else if (!strcmp(offset, "beginning"))
-      start_offset = RD_KAFKA_OFFSET_BEGINNING;
-    else if (!strcmp(offset, "stored"))
-      start_offset = RD_KAFKA_OFFSET_STORED;
-    else
-      start_offset = strtoll(offset, NULL, 10);
-  }
+    int read_counter = 0,
+        run = 1;
+    //nothing to consume?
+    if (item_count == 0)
+        return 0;
+    if (strlen(offset) != 0)
+    {
+        if (!strcmp(offset, "end"))
+            start_offset = RD_KAFKA_OFFSET_END;
+        else if (!strcmp(offset, "beginning"))
+            start_offset = RD_KAFKA_OFFSET_BEGINNING;
+        else if (!strcmp(offset, "stored"))
+            start_offset = RD_KAFKA_OFFSET_STORED;
+        else
+        {
+            start_offset = strtoll(offset, NULL, 10);
+            if (start_offset < 1)
+                return -1;
+        }
+
+    }
     rd_kafka_topic_t *rkt;
 
     if (r == NULL)
@@ -597,7 +610,7 @@ void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset,
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_ERR, "phpkafka - no connection to consume from topic: %s", topic);
         }
-        return;
+        return -2;
     }
 
     rd_kafka_topic_conf_t *topic_conf;
@@ -607,66 +620,106 @@ void kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset,
 
     /* Create topic */
     rkt = rd_kafka_topic_new(r, topic, topic_conf);
-    if (log_level) {
+    if (rkt == NULL)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(
+                LOG_ERR,
+               "Failed to consume from topic %s: %s",
+                topic,
+                rd_kafka_err2str(
+                    rd_kafka_errno2err(errno)
+                )
+            );
+        }
+        return -3;
+    }
+    if (log_level)
+    {
         openlog("phpkafka", 0, LOG_USER);
         syslog(LOG_INFO, "phpkafka - start_offset: %"PRId64" and offset passed: %s", start_offset, offset);
 
     }
     /* Start consuming */
-    if (rd_kafka_consume_start(rkt, partition, start_offset) == -1) {
-        if (log_level) {
+    if (rd_kafka_consume_start(rkt, partition, start_offset) == -1)
+    {
+        if (log_level)
+        {
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_INFO, "phpkafka - %% Failed to start consuming: %s",
                 rd_kafka_err2str(rd_kafka_errno2err(errno)));
         }
-        exit(1);
+        return -4;
     }
 
-    if (item_count != 0) {
-      read_counter = item_count;
-    }
-
-    while (run) {
-      if (item_count != 0 && read_counter >= 0) {
-        read_counter--;
-        if (log_level) {
+    /**
+     * Keep reading until run == 0, or read_counter == item_count
+     */
+    for (read_counter=0;read_counter!=item_count;++read_counter)
+    {
+        if (run == 0)
+            break;
+        if (log_level)
+        {
             openlog("phpkafka", 0, LOG_USER);
-            syslog(LOG_INFO, "phpkafka - read_counter: %d", read_counter);
+            syslog(LOG_INFO, "Consuming, count at %d (of %d - run: %d)",
+                read_counter,
+                item_count,
+                run
+            );
         }
-        if (read_counter == -1) {
-          run = 0;
-          continue;//so continue, or we'll get a segfault
+        rd_kafka_message_t *rkmessage = NULL,
+            *rkmessage_return = NULL;
+
+        /* Consume single message.
+         * See rdkafka_performance.c for high speed
+         * consuming of messages. */
+        rkmessage = rd_kafka_consume(rkt, partition, 1000);
+        //timeout ONLY if error didn't cause run to be 0
+        if (!rkmessage)
+        {
+            //break on timeout, makes second call redundant
+            if (errno == ETIMEDOUT)
+            {
+                if (log_level)
+                {
+                    openlog("phpkafka", 0, LOG_USER);
+                    syslog(LOG_INFO, "Consumer timed out, count at %d (of %d) stop consuming after %d messages",
+                        read_counter,
+                        item_count,
+                        read_counter +1
+                    );
+                }
+                break;
+            }
+            continue;
         }
-      }
 
-      rd_kafka_message_t *rkmessage;
-
-      /* Consume single message.
-       * See rdkafka_performance.c for high speed
-       * consuming of messages. */
-      rkmessage = rd_kafka_consume(rkt, partition, 1000);
-      if (!rkmessage) /* timeout */
-        continue;
-
-      rd_kafka_message_t *rkmessage_return;
-      rkmessage_return = msg_consume(rkmessage, &run);
-      if (rkmessage_return != NULL) {
-          if ((int) rkmessage_return->len > 0) {
-              //ensure there is a payload
-              char payload[(int) rkmessage_return->len];
-              sprintf(payload, "%.*s", (int) rkmessage_return->len, (char *) rkmessage_return->payload);
-              add_index_string(return_value, (int) rkmessage_return->offset, payload, 1);
-          } else {
-              //add empty value
-              char payload[1] = "";//empty string
-              add_index_string(return_value, (int) rkmessage_return->offset, payload, 1);
-          }
-      }
-      /* Return message to rdkafka */
-      rd_kafka_message_destroy(rkmessage);
+        rkmessage_return = msg_consume(rkmessage, &run);
+        if (rkmessage_return != NULL)
+        {
+            if ((int) rkmessage_return->len > 0)
+            {
+                //ensure there is a payload
+                char payload[(int) rkmessage_return->len];
+                sprintf(payload, "%.*s", (int) rkmessage_return->len, (char *) rkmessage_return->payload);
+                add_index_string(return_value, (int) rkmessage_return->offset, payload, 1);
+            }
+            else
+            {
+                //add empty value
+                char payload[1] = "";//empty string
+                add_index_string(return_value, (int) rkmessage_return->offset, payload, 1);
+            }
+        }
+        /* Return message to rdkafka */
+        rd_kafka_message_destroy(rkmessage);
     }
 
     /* Stop consuming */
     rd_kafka_consume_stop(rkt, partition);
     rd_kafka_topic_destroy(rkt);
+    return 0;
 }
