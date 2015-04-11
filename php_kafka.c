@@ -719,16 +719,14 @@ PHP_METHOD(Kafka, produceBatch)
 {
     zval *arr,
          *object = getThis(),
-         *entry;
+         **entry;
     GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     char *msg;
     int topic_len,
         msg_len,
         status = 0;
-    zend_ulong num_idx;
-    zend_string *str_idx;
-    zval *arr,
+    HashPosition pos;
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa",
             &topic, &topic_len,
             &arr) == FAILURE) {
@@ -744,11 +742,38 @@ PHP_METHOD(Kafka, produceBatch)
     kafka_set_partition(
         (int) connection->producer_partition
     );
-    status = kafka_produce(connection->producer, topic, msg, msg_len);
     //iterate array of messages, start producing them
     //todo: change individual produce calls to a more performant
     //produce queue...
-    ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(array), num_idx, str_idx, entry)
+    zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(arr), &pos);
+    while (zend_hash_get_current_data_ex(Z_ARRVAL_P(array), (void **)&entry, &pos) == SUCCESS)
+    {
+		if (Z_TYPE_PP(entry) == IS_STRING)
+		{
+            msg = Z_STRVAL_PP(entry);
+            msg_len = Z_STRLEN_PP(entry);
+            status = kafka_produce(
+                connection->producer,
+                topic,
+                msg,
+                msg_len
+            );
+            switch (status)
+            {
+                case -1:
+                    zend_throw_exception(kafka_exception, "Failed to produce message", 0 TSRMLS_CC);
+                    return;
+                case -2:
+                    zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
+                    return;
+            }
+		}
+		zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos);
+	}
+    /*
+     * This bit is actually using the PHP7 array implementation
+     * num_idx is zend_ulong and str_idx is zend_string
+    ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(arr), num_idx, str_idx, entry)
     {
         if (Z_TYPE_P(entry) == IS_STRING)
         {
@@ -772,6 +797,7 @@ PHP_METHOD(Kafka, produceBatch)
 
         }
     } ZEND_HASH_FOREACH_END();
+    */
     RETURN_ZVAL(object, 1, 0);
 }
 /* end proto Kafka::produceBatch */
