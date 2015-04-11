@@ -748,8 +748,8 @@ PHP_METHOD(Kafka, produceBatch)
     zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(arr), &pos);
     while (zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void **)&entry, &pos) == SUCCESS)
     {
-		if (Z_TYPE_PP(entry) == IS_STRING)
-		{
+        if (Z_TYPE_PP(entry) == IS_STRING)
+        {
             msg = Z_STRVAL_PP(entry);
             msg_len = Z_STRLEN_PP(entry);
             status = kafka_produce(
@@ -767,9 +767,9 @@ PHP_METHOD(Kafka, produceBatch)
                     zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
                     return;
             }
-		}
-		zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos);
-	}
+        }
+        zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos);
+    }
     /*
      * This bit is actually using the PHP7 array implementation
      * num_idx is zend_ulong and str_idx is zend_string
