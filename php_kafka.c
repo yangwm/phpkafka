@@ -746,7 +746,7 @@ PHP_METHOD(Kafka, produceBatch)
     //todo: change individual produce calls to a more performant
     //produce queue...
     zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(arr), &pos);
-    while (zend_hash_get_current_data_ex(Z_ARRVAL_P(array), (void **)&entry, &pos) == SUCCESS)
+    while (zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void **)&entry, &pos) == SUCCESS)
     {
 		if (Z_TYPE_PP(entry) == IS_STRING)
 		{
