@@ -60,6 +60,10 @@ ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_set_partition, 0, 0, 1)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO(arginf_kafka_set_compression, 0)
+    ZEND_ARG_INFO(0, compression)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO(arginf_kafka_set_log_level, 0)
     ZEND_ARG_INFO(0, logLevel)
 ZEND_END_ARG_INFO()
@@ -112,6 +116,8 @@ zend_class_entry *kafka_exception;
 static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, __construct, arginf_kafka__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, __destruct, arginf_kafka_void, ZEND_ACC_DTOR | ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setCompression, arginf_kafka_set_compression, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getCompression, arginf_kafka_void, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, set_partition, arginf_kafka_set_partition, ZEND_ACC_PUBLIC|ZEND_ACC_DEPRECATED)
     PHP_ME(Kafka, setPartition, arginf_kafka_set_partition, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartition, arginf_kafka_set_get_partition, ZEND_ACC_PUBLIC)
@@ -158,6 +164,9 @@ PHP_MINIT_FUNCTION(kafka)
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_BEGIN, STRING);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_END, STRING);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_NONE, STRING);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_GZIP, STRING);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_SNAPPY, STRING);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOG_ON, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOG_OFF, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, MODE_CONSUMER, LONG);
@@ -227,6 +236,8 @@ void free_kafka_connection(void *object TSRMLS_DC)
     kafka_connection *connection = ((kafka_connection *) object);
     if (connection->brokers)
         efree(connection->brokers);
+    if (connection->compression)
+        efree(connection->compression);
     if (connection->consumer != NULL)
         kafka_destroy(
             connection->consumer,
@@ -320,6 +331,8 @@ PHP_METHOD(Kafka, __destruct)
     );
     if (connection->brokers)
         efree(connection->brokers);
+    if (connection->compression)
+        efree(connection->compression);
     if (connection->consumer != NULL)
         kafka_destroy(
             connection->consumer,
@@ -332,6 +345,7 @@ PHP_METHOD(Kafka, __destruct)
         );
     connection->producer    = NULL;
     connection->brokers     = NULL;
+    connection->compression = NULL;
     connection->consumer    = NULL;
     connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
 }
@@ -422,6 +436,59 @@ PHP_METHOD(Kafka, setLogLevel)
     RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::setLogLevel */
+
+/* {{{ proto Kafka Kafka::setCompression( string $compression )
+ * Enable compression for produced messages
+ */
+PHP_METHOD(Kafka, setCompression)
+{
+    zval *obj = getThis();
+    char *arg;
+    int arg_len;
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &arg, &arg_len) == FAILURE)
+    {
+        return;
+    }
+    //if valid compression constant was used...
+    if (
+        !strcmp(arg, PHP_KAFKA_COMPRESSION_GZIP)
+            ||
+        !strcmp(arg, PHP_KAFKA_COMPRESSION_NONE)
+            ||
+        !strcmp(arg, PHP_KAFKA_COMPRESSION_SNAPPY)
+    )
+    {
+        if (connection->compression || strcmp(connection->compression, arg))
+        {
+            //close connections, if any, currently only use compression for producers
+            if (connection->producer)
+                kafka_destroy(connection->producer, 1);
+            connection->producer = NULL;
+            connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
+            connection->compression = estrdup(arg);
+        }
+    }
+    else
+    {
+        zend_throw_exception(kafka_exception, "Invalid argument, use Kafka::COMPRESSION_* constants", 0 TSRMLS_CC);
+    }
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto Kafka::setCompression */
+
+/* {{{ proto string Kafka::getCompression( void )
+ * Get type of compression that is currently used
+ */
+PHP_METHOD(Kafka, getCompression)
+{
+    zval *obj = getThis();
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (!connection->compression)
+        RETURN_STRING(PHP_KAFKA_COMPRESSION_NONE, 1);
+    RETURN_STRING(connection->compression, 1);
+}
+/* }}} end proto Kafka::getCompression */
 
 /* {{{ proto Kafka Kafka::setPartition( int $partition [, int $mode ] );
     Set partition to use for Kafka::consume calls
@@ -517,7 +584,8 @@ PHP_METHOD(Kafka, getTopics)
         connection->consumer = kafka_set_connection(
             RD_KAFKA_CONSUMER,
             connection->brokers,
-            0
+            0,
+            NULL
         );
         connection->rk_type = RD_KAFKA_CONSUMER;
     }
@@ -550,12 +618,15 @@ PHP_METHOD(Kafka, setBrokers)
     //free previous brokers value, if any
     if (connection->brokers)
         efree(connection->brokers);
+    if (connection->compression)
+        efree(connection->compression);
     //set brokers
     connection->brokers = estrdup(
         Z_STRVAL_P(brokers)
     );
     //reinit to NULL
     connection->producer = connection->consumer = NULL;
+    connection->compression = NULL;
     //restore partitions back to random...
     connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
     //set brokers member to correct value
@@ -583,7 +654,7 @@ PHP_METHOD(Kafka, getPartitionsForTopic)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0);
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0, NULL);
     }
     array_init(return_value);
     kafka_get_partitions(connection->consumer, return_value, topic);
@@ -610,7 +681,7 @@ PHP_METHOD(Kafka, getPartitionOffsets)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0);
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0, NULL);
     }
     kafka_r = kafka_partition_offsets(
         connection->consumer,
@@ -716,7 +787,12 @@ PHP_METHOD(Kafka, produce)
     }
     if (!connection->producer)
     {
-        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers, connection->producer_reporting);
+        connection->producer = kafka_set_connection(
+            RD_KAFKA_PRODUCER,
+            connection->brokers,
+            connection->producer_reporting,
+            connection->compression
+        );
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
@@ -774,7 +850,12 @@ PHP_METHOD(Kafka, produceBatch)
     //get producer up and running
     if (!connection->producer)
     {
-        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers, connection->producer_reporting);
+        connection->producer = kafka_set_connection(
+            RD_KAFKA_PRODUCER,
+            connection->brokers,
+            connection->producer_reporting,
+            connection->compression
+        );
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
@@ -888,7 +969,7 @@ PHP_METHOD(Kafka, consume)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0);
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0, NULL);
     }
     array_init(return_value);
     if (connection->consumer_partition == PHP_KAFKA_PARTITION_RANDOM)
