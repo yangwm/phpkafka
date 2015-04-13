@@ -191,6 +191,26 @@ final class Kafka
     }
 
     /**
+     * Produce a batch of messages without having PHP method calls
+     * Causing any overhead (internally, array is iterated, and produced
+     * @param string $topic
+     * @param array $messages
+     * @return $this
+     * @throws \KafkaException
+     */
+    public function produceBatch($topic, array $messages)
+    {
+        foreach ($messages as $msg) {
+            //non-string messages are skipped silently ATM
+            if (is_string($msg)) {
+                //internally, the method call overhead is not there
+                $this->produce($topic, $msg);
+            }
+        }
+        return $this;
+    }
+
+    /**
      * @param string $topic
      * @param string|int $offset
      * @param string|int $count

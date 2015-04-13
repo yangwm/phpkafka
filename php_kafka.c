@@ -25,6 +25,7 @@
 #include <php_kafka.h>
 #include "kafka.h"
 #include "zend_exceptions.h"
+#include "zend_hash.h"
 
 /* {{{ arginfo */
 ZEND_BEGIN_ARG_INFO(arginf_kafka__constr, 0)
@@ -51,6 +52,11 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, message)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_produce_batch, 0)
+    ZEND_ARG_INFO(0, topic)
+    ZEND_ARG_INFO(0, messages)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 2)
@@ -92,6 +98,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, disconnect, arginf_kafka_disconnect, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, isConnected, arginf_kafka_is_conn, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, produce, arginf_kafka_produce, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, produceBatch, arginf_kafka_produce_batch, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, consume, arginf_kafka_consume, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL} /* Marks the end of function entries */
 };
@@ -662,8 +669,8 @@ PHP_METHOD(Kafka, disconnect)
 /* }}} end Kafka::disconnect */
 
 /* {{{ proto Kafka Kafka::produce( string $topic, string $message);
-    Produce a message, returns int (partition used to produce)
-    or false if something went wrong
+    Produce a message, returns instance
+    or throws KafkaException in case something went wrong
 */
 PHP_METHOD(Kafka, produce)
 {
@@ -703,6 +710,97 @@ PHP_METHOD(Kafka, produce)
     RETURN_ZVAL(object, 1, 0);
 }
 /* }}} end Kafka::produce */
+
+/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages);
+    Produce a batch of messages, returns instance
+    or throws exceptions in case of error
+*/
+PHP_METHOD(Kafka, produceBatch)
+{
+    zval *arr,
+         *object = getThis(),
+         **entry;
+    GET_KAFKA_CONNECTION(connection, object);
+    char *topic;
+    char *msg;
+    int topic_len,
+        msg_len,
+        status = 0;
+    HashPosition pos;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa",
+            &topic, &topic_len,
+            &arr) == FAILURE) {
+        return;
+    }
+    //get producer up and running
+    if (!connection->producer)
+    {
+        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers);
+        connection->rk_type = RD_KAFKA_PRODUCER;
+    }
+    //this does nothing at this stage...
+    kafka_set_partition(
+        (int) connection->producer_partition
+    );
+    //iterate array of messages, start producing them
+    //todo: change individual produce calls to a more performant
+    //produce queue...
+    zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(arr), &pos);
+    while (zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void **)&entry, &pos) == SUCCESS)
+    {
+        if (Z_TYPE_PP(entry) == IS_STRING)
+        {
+            msg = Z_STRVAL_PP(entry);
+            msg_len = Z_STRLEN_PP(entry);
+            status = kafka_produce(
+                connection->producer,
+                topic,
+                msg,
+                msg_len
+            );
+            switch (status)
+            {
+                case -1:
+                    zend_throw_exception(kafka_exception, "Failed to produce message", 0 TSRMLS_CC);
+                    return;
+                case -2:
+                    zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
+                    return;
+            }
+        }
+        zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos);
+    }
+    /*
+     * This bit is actually using the PHP7 array implementation
+     * num_idx is zend_ulong and str_idx is zend_string
+    ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(arr), num_idx, str_idx, entry)
+    {
+        if (Z_TYPE_P(entry) == IS_STRING)
+        {
+            msg = Z_STRVAL_P(entry);
+            msg_len = Z_STRLEN_P(entry);
+            status = kafka_produce(
+                connection->producer,
+                topic,
+                msg,
+                msg_len
+            );
+            switch (status)
+            {
+                case -1:
+                    zend_throw_exception(kafka_exception, "Failed to produce message", 0 TSRMLS_CC);
+                    return;
+                case -2:
+                    zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
+                    return;
+            }
+
+        }
+    } ZEND_HASH_FOREACH_END();
+    */
+    RETURN_ZVAL(object, 1, 0);
+}
+/* end proto Kafka::produceBatch */
 
 /* {{{ proto array Kafka::consume( string $topic, [ string $offset = 0 [, mixed $length = 1] ] );
     Consumes 1 or more ($length) messages from the $offset (default 0)
