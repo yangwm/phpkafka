@@ -27,6 +27,29 @@
 #include "zend_exceptions.h"
 #include "zend_hash.h"
 
+
+#ifdef COMPILE_DL_KAFKA
+ZEND_GET_MODULE(kafka)
+#endif
+#define REGISTER_KAFKA_CLASS_CONST_STRING(ce, name, value) \
+    zend_declare_class_constant_stringl(ce, name, sizeof(name)-1, value, sizeof(value)-1)
+#define REGISTER_KAFKA_CLASS_CONST_LONG(ce, name, value) \
+    zend_declare_class_constant_long(ce, name, sizeof(name)-1, value)
+#define REGISTER_KAFKA_CLASS_CONST(ce, c_name, type) \
+    REGISTER_KAFKA_CLASS_CONST_ ## type(ce, #c_name, PHP_KAFKA_ ## c_name)
+#ifndef BASE_EXCEPTION
+#if (PHP_MAJOR_VERSION < 5) || ( ( PHP_MAJOR_VERSION == 5 ) && (PHP_MINOR_VERSION < 2) )
+#define BASE_EXCEPTION zend_exception_get_default()
+#else
+#define BASE_EXCEPTION zend_exception_get_default(TSRMLS_C)
+#endif
+#endif
+
+#define GET_KAFKA_CONNECTION(varname, thisObj) \
+    kafka_connection *varname = (kafka_connection *) zend_object_store_get_object( \
+        thisObj TSRMLS_CC \
+    )
+
 /* {{{ arginfo */
 ZEND_BEGIN_ARG_INFO(arginf_kafka__constr, 0)
     ZEND_ARG_INFO(0, brokers)
@@ -49,14 +72,16 @@ ZEND_BEGIN_ARG_INFO(arginf_kafka_set_get_partition, 0)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce, 0, 0, 2)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, message)
+    ZEND_ARG_INFO(0, reporting)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO(arginf_kafka_produce_batch, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce_batch, 0, 0, 2)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, messages)
+    ZEND_ARG_INFO(0, reporting)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 2)
@@ -78,7 +103,7 @@ ZEND_END_ARG_INFO()
 
 /* }}} end arginfo */
 
-/* decalre the class entry */
+/* decalre the class entries */
 zend_class_entry *kafka_ce;
 zend_class_entry *kafka_exception;
 
@@ -116,29 +141,6 @@ zend_module_entry kafka_module_entry = {
     STANDARD_MODULE_PROPERTIES
 };
 
-#ifdef COMPILE_DL_KAFKA
-ZEND_GET_MODULE(kafka)
-#endif
-#define REGISTER_KAFKA_CLASS_CONST_STRING(ce, name, value) \
-    zend_declare_class_constant_stringl(ce, name, sizeof(name)-1, value, sizeof(value)-1)
-#define REGISTER_KAFKA_CLASS_CONST_LONG(ce, name, value) \
-    zend_declare_class_constant_long(ce, name, sizeof(name)-1, value)
-#define REGISTER_KAFKA_CLASS_CONST(ce, c_name, type) \
-    REGISTER_KAFKA_CLASS_CONST_ ## type(ce, #c_name, PHP_KAFKA_ ## c_name)
-#ifndef BASE_EXCEPTION
-#if (PHP_MAJOR_VERSION < 5) || ( ( PHP_MAJOR_VERSION == 5 ) && (PHP_MINOR_VERSION < 2) )
-#define BASE_EXCEPTION zend_exception_get_default()
-#else
-#define BASE_EXCEPTION zend_exception_get_default(TSRMLS_C)
-#endif
-#endif
-
-#define GET_KAFKA_CONNECTION(varname, thisObj) \
-    kafka_connection *varname = (kafka_connection *) zend_object_store_get_object( \
-        thisObj TSRMLS_CC \
-    )
-
-
 PHP_MINIT_FUNCTION(kafka)
 {
     zend_class_entry ce,
@@ -161,11 +163,23 @@ PHP_MINIT_FUNCTION(kafka)
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, MODE_CONSUMER, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, MODE_PRODUCER, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, PARTITION_RANDOM, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_REPORT_ON, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_REPORT_OFF, LONG);
     return SUCCESS;
 }
-PHP_RSHUTDOWN_FUNCTION(kafka) { return SUCCESS; }
-PHP_RINIT_FUNCTION(kafka) { return SUCCESS; }
-PHP_MSHUTDOWN_FUNCTION(kafka) {
+
+PHP_RSHUTDOWN_FUNCTION(kafka)
+{
+    return SUCCESS;
+}
+
+PHP_RINIT_FUNCTION(kafka)
+{
+    return SUCCESS;
+}
+
+PHP_MSHUTDOWN_FUNCTION(kafka)
+{
     return SUCCESS;
 }
 
@@ -502,7 +516,8 @@ PHP_METHOD(Kafka, getTopics)
     {
         connection->consumer = kafka_set_connection(
             RD_KAFKA_CONSUMER,
-            connection->brokers
+            connection->brokers,
+            0
         );
         connection->rk_type = RD_KAFKA_CONSUMER;
     }
@@ -568,7 +583,7 @@ PHP_METHOD(Kafka, getPartitionsForTopic)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0);
     }
     array_init(return_value);
     kafka_get_partitions(connection->consumer, return_value, topic);
@@ -595,7 +610,7 @@ PHP_METHOD(Kafka, getPartitionOffsets)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0);
     }
     kafka_r = kafka_partition_offsets(
         connection->consumer,
@@ -664,11 +679,12 @@ PHP_METHOD(Kafka, disconnect)
         kafka_destroy(connection->producer, 1);
     connection->producer = connection->consumer = NULL;
     connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
+    connection->producer_reporting = PHP_KAFKA_OFFSET_REPORT_OFF;
     RETURN_TRUE;
 }
 /* }}} end Kafka::disconnect */
 
-/* {{{ proto Kafka Kafka::produce( string $topic, string $message);
+/* {{{ proto Kafka Kafka::produce( string $topic, string $message [, int $reporting = null ]);
     Produce a message, returns instance
     or throws KafkaException in case something went wrong
 */
@@ -678,26 +694,39 @@ PHP_METHOD(Kafka, produce)
     GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     char *msg;
+    long reporting = connection->producer_reporting;
     int topic_len,
         msg_len,
         status = 0;
 
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|l",
             &topic, &topic_len,
-            &msg, &msg_len) == FAILURE) {
+            &msg, &msg_len, &reporting) == FAILURE) {
         return;
+    }
+    //silently default to last setting (default 0)
+    if (reporting != PHP_KAFKA_OFFSET_REPORT_ON && reporting != PHP_KAFKA_OFFSET_REPORT_OFF)
+        reporting = connection->producer_reporting;
+    else if (reporting != connection->producer_reporting)
+    {
+        kafka_destroy(connection->producer, 1);
+        connection->producer = NULL;
+        connection->producer_reporting = reporting;
     }
     if (!connection->producer)
     {
-        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers);
+        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers, connection->producer_reporting);
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
     kafka_set_partition(
         (int) connection->producer_partition
     );
-    status = kafka_produce(connection->producer, topic, msg, msg_len);
+    if (connection->producer_reporting == PHP_KAFKA_OFFSET_REPORT_ON)
+        status = kafka_produce_report(connection->producer, topic, msg, msg_len);
+    else
+        status = kafka_produce(connection->producer, topic, msg, msg_len);
     switch (status)
     {
         case -1:
@@ -723,19 +752,29 @@ PHP_METHOD(Kafka, produceBatch)
     GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     char *msg;
+    long reporting;
     int topic_len,
         msg_len,
         status = 0;
     HashPosition pos;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa|l",
             &topic, &topic_len,
             &arr) == FAILURE) {
         return;
     }
+    //silently default to last setting (default 0)
+    if (reporting != PHP_KAFKA_OFFSET_REPORT_ON && reporting != PHP_KAFKA_OFFSET_REPORT_OFF)
+        reporting = connection->producer_reporting;
+    else if (reporting != connection->producer_reporting)
+    {
+        kafka_destroy(connection->producer, 1);
+        connection->producer = NULL;
+        connection->producer_reporting = reporting;
+    }
     //get producer up and running
     if (!connection->producer)
     {
-        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers);
+        connection->producer = kafka_set_connection(RD_KAFKA_PRODUCER, connection->brokers, connection->producer_reporting);
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
@@ -752,12 +791,10 @@ PHP_METHOD(Kafka, produceBatch)
         {
             msg = Z_STRVAL_PP(entry);
             msg_len = Z_STRLEN_PP(entry);
-            status = kafka_produce(
-                connection->producer,
-                topic,
-                msg,
-                msg_len
-            );
+            if (connection->producer_reporting == PHP_KAFKA_OFFSET_REPORT_ON)
+                status = kafka_produce_report(connection->producer, topic, msg, msg_len);
+            else
+                status = kafka_produce(connection->producer, topic, msg, msg_len);
             switch (status)
             {
                 case -1:
@@ -851,7 +888,7 @@ PHP_METHOD(Kafka, consume)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers);
+        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0);
     }
     array_init(return_value);
     if (connection->consumer_partition == PHP_KAFKA_PARTITION_RANDOM)

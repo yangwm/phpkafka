@@ -9,6 +9,8 @@ final class Kafka
     const MODE_CONSUMER = 0;
     const MODE_PRODUCER = 1;
     const PARTITION_RANDOM = -1;
+    const OFFSET_REPORT_ON = 1;
+    const OFFSET_REPORT_OFF = 0;
 
     /**
      * This property does not exist, connection status
@@ -179,10 +181,11 @@ final class Kafka
      * produce message on topic
      * @param string $topic
      * @param string $message
+     * @param int $reportMode
      * @return $this
      * @throws \KafkaException
      */ 
-    public function produce($topic, $message)
+    public function produce($topic, $message, $reportMode = 0)
     {
         $this->connected = true;
         //internal call, produce message on topic
@@ -195,10 +198,11 @@ final class Kafka
      * Causing any overhead (internally, array is iterated, and produced
      * @param string $topic
      * @param array $messages
+     * @param int $reportMode
      * @return $this
      * @throws \KafkaException
      */
-    public function produceBatch($topic, array $messages)
+    public function produceBatch($topic, array $messages, $reportMode = 0)
     {
         foreach ($messages as $msg) {
             //non-string messages are skipped silently ATM
