@@ -150,7 +150,7 @@ void kafka_produce_detailed_cb(rd_kafka_t *rk, const rd_kafka_message_t *msg, vo
     params->partition = msg->partition;
 }
 
-rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level)
+rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level, const char *compression)
 {
     rd_kafka_t *r = NULL;
     char *tmp = brokers;
@@ -176,6 +176,17 @@ rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report
      * delivery to broker, or upon failure to deliver to broker. */
     if (type == RD_KAFKA_PRODUCER)
     {
+        if (compression && !strcmp(compression, "none"))
+        {//silently fail on error ATM...
+            if (RD_KAFKA_CONF_OK != rd_kafka_conf_set(conf, "compression.codec", compression, errstr, sizeof errstr))
+            {
+                if (log_level)
+                {
+                    openlog("phpkafka", 0, LOG_USER);
+                    syslog(LOG_INFO, "Failed to set compression to %s", compression);
+                }
+            }
+        }
         if (report_level == 0)
             rd_kafka_conf_set_dr_cb(conf, kafka_produce_cb_simple);
         else
