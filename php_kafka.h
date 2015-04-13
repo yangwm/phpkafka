@@ -27,6 +27,8 @@
 #define PHP_KAFKA_LOG_OFF 0
 #define PHP_KAFKA_MODE_CONSUMER 0
 #define PHP_KAFKA_MODE_PRODUCER 1
+#define PHP_KAFKA_OFFSET_REPORT_ON 1
+#define PHP_KAFKA_OFFSET_REPORT_OFF 0
 
 extern zend_module_entry kafka_module_entry;
 
@@ -48,6 +50,7 @@ typedef struct _kafka_r {
     char                *brokers;
     long                consumer_partition;
     long                producer_partition;
+    int                 producer_reporting;
     rd_kafka_type_t     rk_type;
 } kafka_connection;
 
