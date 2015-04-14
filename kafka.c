@@ -447,7 +447,8 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
     struct produce_cb_params pcb = {msg_cnt, 0, 0, 0, 0, NULL};
     void *opaque;
     int partition = RD_KAFKA_PARTITION_UA;
-    int i;
+    int i,
+        err_cnt = 0;
 
     if (report)
         opaque = (void *) &pcb;
@@ -471,20 +472,45 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
     /* Create topic */
     rkt = rd_kafka_topic_new(r, topic, topic_conf);
 
-    for (i=0;i<msg_cnt;++i)
+    //do we have VLA?
+    rd_kafka_message_t *messages = calloc(sizeof *messages, msg_cnt);
+    if (messages == NULL)
+    {//fallback to individual produce calls
+        for (i=0;i<msg_cnt;++i)
+        {
+            if (rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, msg[i], msg_len[i], NULL, 0, opaque) == -1)
+            {
+                if (log_level)
+                {
+                    openlog("phpkafka", 0, LOG_USER);
+                    syslog(LOG_INFO, "phpkafka - %% Failed to produce to topic %s "
+                        "partition %i: %s",
+                        rd_kafka_topic_name(rkt), partition,
+                        rd_kafka_err2str(
+                        rd_kafka_errno2err(errno)));
+                }
+            }
+        }
+    }
+    else
     {
-        if (rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, msg[i], msg_len[i], NULL, 0, opaque) == -1)
+        for (i=0;i<msg_cnt;++i)
+        {
+            messages[i].payload = msg[i];
+            messages[i].len = msg_len[i];
+        }
+        i = rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, messages, msg_cnt, NULL, 0, opaque);
+        if (i < msg_cnt)
         {
             if (log_level)
             {
                 openlog("phpkafka", 0, LOG_USER);
-                syslog(LOG_INFO, "phpkafka - %% Failed to produce to topic %s "
-                    "partition %i: %s",
-                    rd_kafka_topic_name(rkt), partition,
-                    rd_kafka_err2str(
-                    rd_kafka_errno2err(errno)));
+                syslog(LOG_WARNING, "Failed to queue full message batch, %d of %d were put in queue", i, msg_cnt);
             }
         }
+        err_cnt = msg_cnt - i;
+        free(messages);
+        messages = NULL;
     }
     /* Poll to handle delivery reports */
     rd_kafka_poll(r, 0);
@@ -495,7 +521,9 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
 
     //set global to NULL again
     rd_kafka_topic_destroy(rkt);
-    return pcb.err_count;
+    if (report)
+        err_cnt = pcb.err_count;
+    return err_cnt;
 }
 
 int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report)
