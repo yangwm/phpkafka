@@ -157,6 +157,118 @@ void kafka_produce_detailed_cb(rd_kafka_t *rk, const rd_kafka_message_t *msg, vo
     }
 }
 
+rd_kafka_t *kafka_get_connection(kafka_connection_params params, const char *brokers)
+{
+    rd_kafka_t *r = NULL;
+    char errstr[512];
+    rd_kafka_conf_t *conf = rd_kafka_conf_new();
+    //set error callback
+    rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
+    if (params.type == RD_KAFKA_CONSUMER)
+    {
+        if (params.queue_buffer)
+            rd_kafka_conf_set(conf, "queued.min.messages", params.queue_buffer, NULL, 0);
+        r = rd_kafka_new(params.type, conf, errstr, sizeof errstr);
+        if (!r)
+        {
+            if (params.log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_ERR, "Failed to connect to kafka: %s", errstr);
+            }
+            //destroy config, no connection to use it...
+            rd_kafka_conf_destroy(conf);
+            return NULL;
+        }
+        if (!rd_kafka_brokers_add(r, brokers))
+        {
+            if (params.log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_ERR, "Failed to connect to brokers %s", brokers);
+            }
+            rd_kafka_destroy(r);
+            return NULL;
+        }
+        return r;
+    }
+    if (params.compression)
+    {
+        rd_kafka_conf_res_t result = rd_kafka_conf_set(
+            conf, "compression.codec",params.compression, errstr, sizeof errstr
+        );
+        if (result != RD_KAFKA_CONF_OK)
+        {
+            if (params.log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_ALERT, "Failed to set compression %s: %s", params.compression, errstr);
+            }
+            rd_kafka_conf_destroy(conf);
+            return NULL;
+        }
+    }
+    if (params.retry_count)
+    {
+        rd_kafka_conf_res_t result = rd_kafka_conf_set(
+            conf, "message.send.max.retries",params.retry_count, errstr, sizeof errstr
+        );
+        if (result != RD_KAFKA_CONF_OK)
+        {
+            if (params.log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_ALERT, "Failed to set compression %s: %s", params.compression, errstr);
+            }
+            rd_kafka_conf_destroy(conf);
+            return NULL;
+        }
+    }
+    if (params.retry_interval)
+    {
+        rd_kafka_conf_res_t result = rd_kafka_conf_set(
+            conf, "retry.backoff.ms",params.retry_interval, errstr, sizeof errstr
+        );
+        if (result != RD_KAFKA_CONF_OK)
+        {
+            if (params.log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_ALERT, "Failed to set compression %s: %s", params.compression, errstr);
+            }
+            rd_kafka_conf_destroy(conf);
+            return NULL;
+        }
+    }
+    if (params.reporting == 1)
+        rd_kafka_conf_set_dr_cb(conf, kafka_produce_cb_simple);
+    else if (params.reporting == 2)
+        rd_kafka_conf_set_dr_msg_cb(conf, kafka_produce_detailed_cb);
+    r = rd_kafka_new(params.type, conf, errstr, sizeof errstr);
+    if (!r)
+    {
+        if (params.log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "Failed to connect to kafka: %s", errstr);
+        }
+        //destroy config, no connection to use it...
+        rd_kafka_conf_destroy(conf);
+        return NULL;
+    }
+    if (!rd_kafka_brokers_add(r, brokers))
+    {
+        if (params.log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "Failed to connect to brokers %s", brokers);
+        }
+        rd_kafka_destroy(r);
+        return NULL;
+    }
+    return r;
+}
+
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level, const char *compression)
 {
     rd_kafka_t *r = NULL;
@@ -194,12 +306,10 @@ rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report
                 }
             }
         }
-        if (report_level == 0)
+        if (report_level == 1)
             rd_kafka_conf_set_dr_cb(conf, kafka_produce_cb_simple);
-        else
-        {
+        else if (report_level == 2)
             rd_kafka_conf_set_dr_msg_cb(conf, kafka_produce_detailed_cb);
-        }
     }
     rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
 
@@ -322,13 +432,18 @@ int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_le
     return 0;
 }
 
-int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt)
+int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt, int report)
 {
     rd_kafka_topic_t *rkt;
     struct produce_cb_params pcb = {msg_cnt, 0, 0, 0, 0, NULL};
+    void *opaque;
     int partition = RD_KAFKA_PARTITION_UA;
     int i;
 
+    if (report)
+        opaque = (void *) &pcb;
+    else
+        opaque = NULL;
     rd_kafka_topic_conf_t *topic_conf;
 
     if (r == NULL)
@@ -349,7 +464,7 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
 
     for (i=0;i<msg_cnt;++i)
     {
-        if (rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, msg[i], msg_len[i], NULL, 0, &pcb) == -1)
+        if (rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, msg[i], msg_len[i], NULL, 0, opaque) == -1)
         {
             if (log_level)
             {
@@ -366,7 +481,7 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
     rd_kafka_poll(r, 0);
 
     /* Wait for messages to be delivered */
-    while (pcb.msg_count && rd_kafka_outq_len(r) > 0)
+    while (report && pcb.msg_count && rd_kafka_outq_len(r) > 0)
         rd_kafka_poll(r, 10);
 
     //set global to NULL again
@@ -374,12 +489,19 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
     return pcb.err_count;
 }
 
-int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
+int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report)
 {
 
     rd_kafka_topic_t *rkt;
     struct produce_cb_params pcb = {1, 0, 0, 0, 0, NULL};
+    void *opaque;
     int partition = RD_KAFKA_PARTITION_UA;
+
+    //decide whether to pass callback params or not...
+    if (report)
+        opaque = (void *) &pcb;
+    else
+        opaque = NULL;
 
     rd_kafka_topic_conf_t *topic_conf;
 
@@ -408,7 +530,7 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
                      /* Message opaque, provided in
                       * delivery report callback as
                       * msg_opaque. */
-                     &pcb) == -1) {
+                     opaque) == -1) {
        if (log_level) {
            openlog("phpkafka", 0, LOG_USER);
            syslog(LOG_INFO, "phpkafka - %% Failed to produce to topic %s "
@@ -425,7 +547,7 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
     rd_kafka_poll(r, 0);
 
     /* Wait for messages to be delivered */
-    while (pcb.msg_count && rd_kafka_outq_len(r) > 0)
+    while (report && pcb.msg_count && rd_kafka_outq_len(r) > 0)
       rd_kafka_poll(r, 10);
 
     //set global to NULL again
