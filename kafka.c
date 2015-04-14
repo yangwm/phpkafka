@@ -97,7 +97,8 @@ void kafka_produce_cb_simple(rd_kafka_t *rk, void *payload, size_t len, int err_
     }
     if (log_level)
     {
-        params->err_count += 1;
+        if (params)
+            params->err_count += 1;
         openlog("phpkafka", 0, LOG_USER);
         if (err_code)
             syslog(LOG_ERR, "Failed to deliver message %s: %s", (char *) payload, rd_kafka_err2str(err_code));
@@ -124,33 +125,39 @@ void kafka_produce_detailed_cb(rd_kafka_t *rk, const rd_kafka_message_t *msg, vo
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_ERR, "Failed to deliver message: %s", errstr);
         }
-        params->err_count += 1;
-        params->err_msg = realloc(
-            params->err_msg,
-            (offset + err_len + 2) * sizeof params->err_msg
-        );
-        if (params->err_msg == NULL)
+        if (params)
         {
-            params->errmsg_len = 0;
-        }
-        else
-        {
-            strcpy(
-                params->err_msg + offset,
-                errstr
+            params->err_count += 1;
+            params->err_msg = realloc(
+                params->err_msg,
+                (offset + err_len + 2) * sizeof params->err_msg
             );
-            offset += err_len;//get new strlen
-            params->err_msg[offset] = '\n';//add new line
-            ++offset;
-            params->err_msg[offset] = '\0';//ensure zero terminated string
+            if (params->err_msg == NULL)
+            {
+                params->errmsg_len = 0;
+            }
+            else
+            {
+                strcpy(
+                    params->err_msg + offset,
+                    errstr
+                );
+                offset += err_len;//get new strlen
+                params->err_msg[offset] = '\n';//add new line
+                ++offset;
+                params->err_msg[offset] = '\0';//ensure zero terminated string
+            }
         }
         return;
     }
-    params->offset = msg->offset;
-    params->partition = msg->partition;
+    if (params)
+    {
+        params->offset = msg->offset;
+        params->partition = msg->partition;
+    }
 }
 
-rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level)
+rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level, const char *compression)
 {
     rd_kafka_t *r = NULL;
     char *tmp = brokers;
@@ -176,6 +183,17 @@ rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report
      * delivery to broker, or upon failure to deliver to broker. */
     if (type == RD_KAFKA_PRODUCER)
     {
+        if (compression && !strcmp(compression, "none"))
+        {//silently fail on error ATM...
+            if (RD_KAFKA_CONF_OK != rd_kafka_conf_set(conf, "compression.codec", compression, errstr, sizeof errstr))
+            {
+                if (log_level)
+                {
+                    openlog("phpkafka", 0, LOG_USER);
+                    syslog(LOG_INFO, "Failed to set compression to %s", compression);
+                }
+            }
+        }
         if (report_level == 0)
             rd_kafka_conf_set_dr_cb(conf, kafka_produce_cb_simple);
         else
@@ -295,15 +313,65 @@ int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_le
         //handle delivery response (callback)
         rd_kafka_poll(rk, 0);
         rd_kafka_topic_destroy(rkt);
-        rd_kafka_topic_conf_destroy(conf);
         return -1;
     }
     rd_kafka_poll(rk, 0);
     while(pcb.msg_count && rd_kafka_outq_len(r) > 0)
         rd_kafka_poll(r, 10);
     rd_kafka_topic_destroy(rkt);
-    rd_kafka_topic_conf_destroy(conf);
     return 0;
+}
+
+int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt)
+{
+    rd_kafka_topic_t *rkt;
+    struct produce_cb_params pcb = {msg_cnt, 0, 0, 0, 0, NULL};
+    int partition = RD_KAFKA_PARTITION_UA;
+    int i;
+
+    rd_kafka_topic_conf_t *topic_conf;
+
+    if (r == NULL)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "phpkafka - no connection to produce to topic: %s", topic);
+        }
+        return -2;
+    }
+
+    /* Topic configuration */
+    topic_conf = rd_kafka_topic_conf_new();
+
+    /* Create topic */
+    rkt = rd_kafka_topic_new(r, topic, topic_conf);
+
+    for (i=0;i<msg_cnt;++i)
+    {
+        if (rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, msg[i], msg_len[i], NULL, 0, &pcb) == -1)
+        {
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_INFO, "phpkafka - %% Failed to produce to topic %s "
+                    "partition %i: %s",
+                    rd_kafka_topic_name(rkt), partition,
+                    rd_kafka_err2str(
+                    rd_kafka_errno2err(errno)));
+            }
+        }
+    }
+    /* Poll to handle delivery reports */
+    rd_kafka_poll(r, 0);
+
+    /* Wait for messages to be delivered */
+    while (pcb.msg_count && rd_kafka_outq_len(r) > 0)
+        rd_kafka_poll(r, 10);
+
+    //set global to NULL again
+    rd_kafka_topic_destroy(rkt);
+    return pcb.err_count;
 }
 
 int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
@@ -350,7 +418,6 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
                rd_kafka_errno2err(errno)));
         }
        rd_kafka_topic_destroy(rkt);
-       rd_kafka_topic_conf_destroy(topic_conf);
        return -1;
     }
 
@@ -363,7 +430,6 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len)
 
     //set global to NULL again
     rd_kafka_topic_destroy(rkt);
-    rd_kafka_topic_conf_destroy(topic_conf);
     return 0;
 }
 
@@ -541,7 +607,6 @@ int kafka_partition_count(rd_kafka_t *r, const char *topic)
         rd_kafka_metadata_destroy(meta);
     }
     rd_kafka_topic_destroy(rkt);
-    rd_kafka_topic_conf_destroy(conf);
     return i;
 }
 
@@ -626,7 +691,6 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
     if (meta)
         rd_kafka_metadata_destroy(meta);
     rd_kafka_topic_destroy(rkt);
-    rd_kafka_topic_conf_destroy(conf);
     return i;
 }
 
@@ -701,7 +765,6 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
             meta = NULL;
             rd_kafka_queue_destroy(rkqu);
             rd_kafka_topic_destroy(rkt);
-            rd_kafka_topic_conf_destroy(conf);
             return;
         }
         cb_params.eop = p;
@@ -736,7 +799,6 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
         while(rd_kafka_outq_len(rk) > 0)
             rd_kafka_poll(rk, 50);
         rd_kafka_topic_destroy(rkt);
-        rd_kafka_topic_conf_destroy(conf);
     }
     if (meta)
         rd_kafka_metadata_destroy(meta);
@@ -886,6 +948,5 @@ int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, 
     /* Stop consuming */
     rd_kafka_consume_stop(rkt, partition);
     rd_kafka_topic_destroy(rkt);
-    rd_kafka_topic_conf_destroy(topic_conf);
     return 0;
 }

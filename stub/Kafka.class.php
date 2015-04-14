@@ -11,6 +11,9 @@ final class Kafka
     const PARTITION_RANDOM = -1;
     const OFFSET_REPORT_ON = 1;
     const OFFSET_REPORT_OFF = 0;
+    const COMPRESSION_NONE = 'none';
+    const COMPRESSION_GZIP = 'gzip';
+    const COMPRESSION_SNAPPY = 'snappy';
 
     /**
      * This property does not exist, connection status
@@ -32,6 +35,12 @@ final class Kafka
      * @var int
      */
     private $lastMode = 0;
+
+    /**
+     * @var string
+     * Internal property to track use of compression when producing messages
+     */
+    private $compression = self::COMPRESSION_NONE;
 
     public function __construct($brokers = 'localhost:9092')
     {}
@@ -87,6 +96,30 @@ final class Kafka
         }
         $this->partition = $partition;
         return $this;
+    }
+
+    /**
+     * Note, this disconnects a previously opened producer connection!
+     * @param string $compression
+     * @return $this
+     * @throws KafkaException
+     */
+    public function setCompression($compression)
+    {
+        if ($compression !== self::COMPRESSION_NONE && $compression !== self::COMPRESSION_GZIP && $compression !== self::COMPRESSION_SNAPPY)
+            throw new KafkaException(
+                sprintf('Invalid argument, use %s::COMPRESSION_* constants', __CLASS__)
+            );
+        $this->compression = $compression;
+        return $this;
+    }
+
+    /**
+     * @return string
+     */
+    public function getCompression()
+    {
+        return $this->compression;
     }
 
     /**
