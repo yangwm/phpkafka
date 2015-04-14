@@ -16,17 +16,19 @@ Changes that have happened thusfar:
 * The extension logged everything in `/var/etc/syslog`, this is still the default behaviour (as this extension is under development), but can be turned off (`Kafka::setLogLevel(Kafka::LOG_OFF)`)
 * Exceptions (`KafkaException`) in case of errors (still work in progress, though)
 * Thread-safe Kafka connections
+* Easy configuration: passing an array of options to the constructor, `setBrokers` or `setOptions` method like you would with `PDO`
+* Compression support added (when produing messages, a compressed message is returned _as-is_)
+* Each instance holds 2 distinct connections (at most): a producer and a consumer
 
 Changes that are on the _TODO_ list include:
 
 * Separating kafka meta information out into a separate class (`KafkaTopic`  and `KafkaMessage` classes)
-* Support for multiple kafka connections
-* Allow PHP to determine what the timeouts should be (mainly when disconnecting, or producing messages)
-* Add custom exceptions
-* Overall API improvements
-* Performance!
+* Allow PHP to determine what the timeouts should be (mainly when disconnecting, or producing messages) (do we still need this?)
+* Add custom exceptions (partially done)
+* Overall API improvements (!!)
+* Performance - it's what you make of it (test results varied from 2 messages/sec to 2.5 million messages per second - see examples below)
 * CI (travis)
-* Adding tests to the build
+* Adding tests to the build (very much a work in progress)
 * PHP7 support
 
 All help is welcome, of course...
@@ -68,3 +70,48 @@ $kafka->setPartition($partitions[0]);//set to first partition
 $msg = $kafka->consume("topic_name", Kafka::OFFSET_BEGIN, 20);
 var_dump($msg);//dumps array of messages
 ```
+
+A more complete example of how to use this extension if performance is what you're after:
+
+```php
+$kafka = new Kafka(
+    'broker-1:9092,broker-2:9092',
+    [
+        Kafka::LOGLEVEL         => Kafka::LOG_OFF,//while in dev, default is Kafka::LOG_ON
+        Kafka::CONFIRM_DELIVERY => Kafka::CONFIRM_OFF,//default is Kafka::CONFIRM_BASIC
+        Kafka::RETRY_COUNT      => 1,//default is 3
+        Kafka::RETRY_INTERVAL   => 25,//default is 100
+    ]
+);
+$fh = fopen('big_data_file.csv', 'r');
+if (!$fh)
+    exit(1);
+$count = 0;
+$lines = [];
+while ($line = fgets($fh, 2048))
+{
+    $lines[] = trim($line);
+    ++$count;
+    if ($count >= 200)
+    {
+        $kafka->produceBatch('my_topic', $lines);
+        $lines = [];
+        $count = 0;
+        //in theory, the next bit is optional, but Kafka::disconnect
+        //waits for the out queue to be empty before closing connections
+        //it's a way to sort-of ensure messages are delivered, even though Kafka::CONFIRM_DELIVERY
+        //was set to Kafka::CONFIRM_OFF... This approach can be used to speed up your code
+        $kafka->disconnect(Kafka::MODE_PRODUCER);//disconnect the producer
+    }
+}
+if ($count)
+{
+    $kafka->produceBatch('my_topic', $lines);
+}
+$kafka->disconnect();//disconnects all opened connections, in this case, only a producer connection will exist, though
+```
+
+I've used code very similar to the code above to produce ~3 million messages, and got an average throughput rate of 2000 messages/second.
+Removing the disconnect call, or increasing the batches to produce will change the rate at which messages get produced.
+
+Not disconnecting at all yielded the best performance (by far): 2.5 million messages in just over 1 second (though depending on the output buffer, and how kafka is set up to handle full produce-queue's, this is not to be recommended!).
