@@ -27,12 +27,19 @@
 #define PHP_KAFKA_LOG_OFF 0
 #define PHP_KAFKA_MODE_CONSUMER 0
 #define PHP_KAFKA_MODE_PRODUCER 1
-#define PHP_KAFKA_OFFSET_REPORT_ON 1
-#define PHP_KAFKA_OFFSET_REPORT_OFF 0
 #define PHP_KAFKA_COMPRESSION_NONE "none"
 #define PHP_KAFKA_COMPRESSION_GZIP "gzip"
 #define PHP_KAFKA_COMPRESSION_SNAPPY "snappy"
-
+//option constants...
+#define PHP_KAFKA_RETRY_COUNT 1
+#define PHP_KAFKA_RETRY_INTERVAL 2
+#define PHP_KAFKA_CONFIRM_DELIVERY 4
+#define PHP_KAFKA_QUEUE_BUFFER_SIZE 8
+#define PHP_KAFKA_COMPRESSION_MODE 16
+#define PHP_KAFKA_LOGLEVEL 32
+#define PHP_KAFKA_CONFIRM_OFF 0
+#define PHP_KAFKA_CONFIRM_BASIC 1
+#define PHP_KAFKA_CONFIRM_EXTENDED 2
 extern zend_module_entry kafka_module_entry;
 
 PHP_MSHUTDOWN_FUNCTION(kafka);
@@ -46,15 +53,20 @@ PHP_RSHUTDOWN_FUNCTION(kafka);
 #include "librdkafka/rdkafka.h"
 
 #define PHP_KAFKA_PARTITION_RANDOM RD_KAFKA_PARTITION_UA
+
 typedef struct _kafka_r {
     zend_object         std;
     rd_kafka_t          *consumer;
     rd_kafka_t          *producer;
     char                *brokers;
     char                *compression;
+    char                *retry_count;
+    char                *retry_interval;
+    int                 delivery_confirm_mode;
+    char                *queue_buffer;
     long                consumer_partition;
     long                producer_partition;
-    int                 producer_reporting;
+    int                 log_level;
     rd_kafka_type_t     rk_type;
 } kafka_connection;
 
@@ -75,6 +87,7 @@ static PHP_METHOD(Kafka, getPartitionsForTopic);
 static PHP_METHOD(Kafka, getPartitionOffsets);
 static PHP_METHOD(Kafka, isConnected);
 static PHP_METHOD(Kafka, setBrokers);
+static PHP_METHOD(Kafka, setOptions);
 static PHP_METHOD(Kafka, getTopics);
 static PHP_METHOD(Kafka, disconnect);
 static PHP_METHOD(Kafka, produceBatch);
