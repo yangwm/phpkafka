@@ -26,6 +26,7 @@ void kafka_set_log_level(int ll);
 void kafka_set_partition(int partition);
 int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len);
 int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_len);
+int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt);
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level, const char *compression);
 int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count, int partition);
 void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic);
