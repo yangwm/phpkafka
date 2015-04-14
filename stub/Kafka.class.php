@@ -4,16 +4,24 @@ final class Kafka
 {
     const OFFSET_BEGIN = 'beginning';
     const OFFSET_END = 'end';
-    const LOG_ON = 1;
+    const LOG_ON = 1;//default
     const LOG_OFF = 0;
     const MODE_CONSUMER = 0;
     const MODE_PRODUCER = 1;
     const PARTITION_RANDOM = -1;
-    const OFFSET_REPORT_ON = 1;
-    const OFFSET_REPORT_OFF = 0;
-    const COMPRESSION_NONE = 'none';
+    const COMPRESSION_NONE = 'none';//default
     const COMPRESSION_GZIP = 'gzip';
     const COMPRESSION_SNAPPY = 'snappy';
+    const CONFIRM_OFF = 0;
+    const CONFIRM_BASIC = 1;//default
+    const CONFIRM_EXTENDED = 2;//under development
+    //use for $options array keys
+    const RETRY_COUNT = 1;
+    const RETRY_INTERVAL = 2;
+    const CONFIRM_DELIVERY = 4;
+    const QUEUE_BUFFER_SIZE = 8;
+    const COMPRESSION_MODE = 16;
+    const LOGLEVEL = 32;
 
     /**
      * This property does not exist, connection status
@@ -42,7 +50,12 @@ final class Kafka
      */
     private $compression = self::COMPRESSION_NONE;
 
-    public function __construct($brokers = 'localhost:9092')
+    /**
+     * @param string $brokers
+     * @param array $options
+     * @throws KafkaException
+     */
+    public function __construct($brokers, array $options = null)
     {}
 
     /**
@@ -97,6 +110,13 @@ final class Kafka
         $this->partition = $partition;
         return $this;
     }
+
+    /**
+     * @param array $options
+     * @throws KafkaException on invalid config
+     */
+    public function setOptions(array $options)
+    {}
 
     /**
      * Note, this disconnects a previously opened producer connection!
@@ -171,10 +191,11 @@ final class Kafka
 
     /**
      * @param string $brokers
+     * @param array $options = null
      * @return $this
      * @throws \KafkaException
      */
-    public function setBrokers($brokers)
+    public function setBrokers($brokers, array $options = null)
     {
         if (!is_string($brokers)) {
             throw new \KafkaException(
@@ -214,11 +235,10 @@ final class Kafka
      * produce message on topic
      * @param string $topic
      * @param string $message
-     * @param int $reportMode
      * @return $this
      * @throws \KafkaException
      */ 
-    public function produce($topic, $message, $reportMode = 0)
+    public function produce($topic, $message)
     {
         $this->connected = true;
         //internal call, produce message on topic
@@ -231,11 +251,10 @@ final class Kafka
      * Causing any overhead (internally, array is iterated, and produced
      * @param string $topic
      * @param array $messages
-     * @param int $reportMode
      * @return $this
      * @throws \KafkaException
      */
-    public function produceBatch($topic, array $messages, $reportMode = 0)
+    public function produceBatch($topic, array $messages)
     {
         foreach ($messages as $msg) {
             //non-string messages are skipped silently ATM
