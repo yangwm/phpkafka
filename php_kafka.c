@@ -26,6 +26,7 @@
 #include "kafka.h"
 #include "zend_exceptions.h"
 #include "zend_hash.h"
+#include <zlib.h>
 #include <ctype.h>
 
 #ifdef COMPILE_DL_KAFKA
@@ -782,6 +783,7 @@ PHP_METHOD(Kafka, getTopics)
     if (connection->brokers == NULL && connection->consumer == NULL)
     {
         zend_throw_exception(kafka_exception, "No brokers to get topics from", 0 TSRMLS_CC);
+        return;
     }
     if (connection->consumer == NULL)
     {
@@ -791,6 +793,11 @@ PHP_METHOD(Kafka, getTopics)
         config.queue_buffer = connection->queue_buffer;
         config.compression = NULL;
         connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_CONSUMER;
     }
     array_init(return_value);
@@ -884,6 +891,11 @@ PHP_METHOD(Kafka, getPartitionsForTopic)
         config.queue_buffer = connection->queue_buffer;
         config.compression = NULL;
         connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_CONSUMER;
     }
     array_init(return_value);
@@ -917,6 +929,11 @@ PHP_METHOD(Kafka, getPartitionOffsets)
         config.queue_buffer = connection->queue_buffer;
         config.compression = NULL;
         connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_CONSUMER;
     }
     kafka_r = kafka_partition_offsets(
@@ -1021,6 +1038,11 @@ PHP_METHOD(Kafka, produce)
         config.retry_interval = connection->retry_interval;
         config.compression = connection->compression;
         connection->producer = kafka_get_connection(config, connection->brokers);
+        if (connection->producer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
@@ -1080,6 +1102,11 @@ PHP_METHOD(Kafka, produceBatch)
         config.compression = connection->compression;
         config.retry_interval = connection->retry_interval;
         connection->producer = kafka_get_connection(config, connection->brokers);
+        if (connection->producer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
@@ -1192,6 +1219,11 @@ PHP_METHOD(Kafka, consume)
         config.queue_buffer = connection->queue_buffer;
         config.compression = NULL;
         connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_CONSUMER;
     }
     array_init(return_value);
