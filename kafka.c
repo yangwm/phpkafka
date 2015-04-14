@@ -332,7 +332,16 @@ void kafka_setup(char* brokers_list)
 
 void kafka_destroy(rd_kafka_t *r, int timeout)
 {
-    if(r != NULL) {
+    if(r != NULL)
+    {
+        //poll handle status
+        rd_kafka_poll(r, 0);
+        if (rd_kafka_outq_len(r) > 0)
+        {//wait for out-queue to clear
+            while(rd_kafka_outq_len(r) > 0)
+                rd_kafka_poll(r, timeout);
+            timeout = 1;
+        }
         rd_kafka_destroy(r);
         //this wait is blocking PHP
         //not calling it will yield segfault, though
