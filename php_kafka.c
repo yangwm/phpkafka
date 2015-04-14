@@ -816,7 +816,7 @@ PHP_METHOD(Kafka, produce)
 }
 /* }}} end Kafka::produce */
 
-/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages);
+/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages [, int $reporting ]);
     Produce a batch of messages, returns instance
     or throws exceptions in case of error
 */
