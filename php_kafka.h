@@ -27,6 +27,11 @@
 #define PHP_KAFKA_LOG_OFF 0
 #define PHP_KAFKA_MODE_CONSUMER 0
 #define PHP_KAFKA_MODE_PRODUCER 1
+#define PHP_KAFKA_OFFSET_REPORT_ON 1
+#define PHP_KAFKA_OFFSET_REPORT_OFF 0
+#define PHP_KAFKA_COMPRESSION_NONE "none"
+#define PHP_KAFKA_COMPRESSION_GZIP "gzip"
+#define PHP_KAFKA_COMPRESSION_SNAPPY "snappy"
 
 extern zend_module_entry kafka_module_entry;
 
@@ -46,8 +51,10 @@ typedef struct _kafka_r {
     rd_kafka_t          *consumer;
     rd_kafka_t          *producer;
     char                *brokers;
+    char                *compression;
     long                consumer_partition;
     long                producer_partition;
+    int                 producer_reporting;
     rd_kafka_type_t     rk_type;
 } kafka_connection;
 
@@ -58,6 +65,8 @@ void free_kafka_connection(void *object TSRMLS_DC);
 /* Kafka class */
 static PHP_METHOD(Kafka, __construct);
 static PHP_METHOD(Kafka, __destruct);
+static PHP_METHOD(Kafka, setCompression);
+static PHP_METHOD(Kafka, getCompression);
 static PHP_METHOD(Kafka, set_partition);
 static PHP_METHOD(Kafka, setPartition);
 static PHP_METHOD(Kafka, getPartition);

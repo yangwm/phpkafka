@@ -9,6 +9,11 @@ final class Kafka
     const MODE_CONSUMER = 0;
     const MODE_PRODUCER = 1;
     const PARTITION_RANDOM = -1;
+    const OFFSET_REPORT_ON = 1;
+    const OFFSET_REPORT_OFF = 0;
+    const COMPRESSION_NONE = 'none';
+    const COMPRESSION_GZIP = 'gzip';
+    const COMPRESSION_SNAPPY = 'snappy';
 
     /**
      * This property does not exist, connection status
@@ -30,6 +35,12 @@ final class Kafka
      * @var int
      */
     private $lastMode = 0;
+
+    /**
+     * @var string
+     * Internal property to track use of compression when producing messages
+     */
+    private $compression = self::COMPRESSION_NONE;
 
     public function __construct($brokers = 'localhost:9092')
     {}
@@ -85,6 +96,30 @@ final class Kafka
         }
         $this->partition = $partition;
         return $this;
+    }
+
+    /**
+     * Note, this disconnects a previously opened producer connection!
+     * @param string $compression
+     * @return $this
+     * @throws KafkaException
+     */
+    public function setCompression($compression)
+    {
+        if ($compression !== self::COMPRESSION_NONE && $compression !== self::COMPRESSION_GZIP && $compression !== self::COMPRESSION_SNAPPY)
+            throw new KafkaException(
+                sprintf('Invalid argument, use %s::COMPRESSION_* constants', __CLASS__)
+            );
+        $this->compression = $compression;
+        return $this;
+    }
+
+    /**
+     * @return string
+     */
+    public function getCompression()
+    {
+        return $this->compression;
     }
 
     /**
@@ -179,10 +214,11 @@ final class Kafka
      * produce message on topic
      * @param string $topic
      * @param string $message
+     * @param int $reportMode
      * @return $this
      * @throws \KafkaException
      */ 
-    public function produce($topic, $message)
+    public function produce($topic, $message, $reportMode = 0)
     {
         $this->connected = true;
         //internal call, produce message on topic
@@ -195,10 +231,11 @@ final class Kafka
      * Causing any overhead (internally, array is iterated, and produced
      * @param string $topic
      * @param array $messages
+     * @param int $reportMode
      * @return $this
      * @throws \KafkaException
      */
-    public function produceBatch($topic, array $messages)
+    public function produceBatch($topic, array $messages, $reportMode = 0)
     {
         foreach ($messages as $msg) {
             //non-string messages are skipped silently ATM
