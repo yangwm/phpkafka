@@ -21,13 +21,26 @@
 #define __KAFKA_H__
 #include "librdkafka/rdkafka.h"
 
+typedef struct connection_params_s {
+    rd_kafka_type_t type;
+    int log_level;
+    int reporting;
+    char *compression;
+    union {
+        char *retry_count;
+        char *queue_buffer;
+    };
+    char *retry_interval;
+} kafka_connection_params;
+
 void kafka_setup(char *brokers);
 void kafka_set_log_level(int ll);
 void kafka_set_partition(int partition);
-int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len);
+int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report);
 int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_len);
-int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt);
+int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt, int report);
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level, const char *compression);
+rd_kafka_t *kafka_get_connection(kafka_connection_params params, const char *brokers);
 int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count, int partition);
 void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic);
 int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic);

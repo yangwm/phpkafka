@@ -26,7 +26,8 @@
 #include "kafka.h"
 #include "zend_exceptions.h"
 #include "zend_hash.h"
-
+#include <zlib.h>
+#include <ctype.h>
 
 #ifdef COMPILE_DL_KAFKA
 ZEND_GET_MODULE(kafka)
@@ -51,8 +52,13 @@ ZEND_GET_MODULE(kafka)
     )
 
 /* {{{ arginfo */
-ZEND_BEGIN_ARG_INFO(arginf_kafka__constr, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka__constr, 0, 0, 1)
     ZEND_ARG_INFO(0, brokers)
+    ZEND_ARG_INFO(0, options)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_set_options, 0)
+    ZEND_ARG_INFO(0, options)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_set_partition, 0, 0, 1)
@@ -76,16 +82,14 @@ ZEND_BEGIN_ARG_INFO(arginf_kafka_set_get_partition, 0)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce, 0, 0, 2)
+ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, message)
-    ZEND_ARG_INFO(0, reporting)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce_batch, 0, 0, 2)
+ZEND_BEGIN_ARG_INFO(arginf_kafka_produce_batch, 0)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, messages)
-    ZEND_ARG_INFO(0, reporting)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 2)
@@ -125,6 +129,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, getPartitionsForTopic, arginf_kafka_get_partitions_for_topic, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getPartitionOffsets, arginf_kafka_get_partitions_for_topic, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, setBrokers, arginf_kafka__constr, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setOptions, arginf_kafka_set_options, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getTopics, arginf_kafka_void, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, disconnect, arginf_kafka_disconnect, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, isConnected, arginf_kafka_is_conn, ZEND_ACC_PUBLIC)
@@ -162,18 +167,32 @@ PHP_MINIT_FUNCTION(kafka)
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
+    //offset constants (consume)
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_BEGIN, STRING);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_END, STRING);
+    //compression mode constants
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_NONE, STRING);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_GZIP, STRING);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_SNAPPY, STRING);
+    //global log-mode constants TODO: refactor to ERRMODE constants
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOG_ON, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOG_OFF, LONG);
+    //connection mode constants
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, MODE_CONSUMER, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, MODE_PRODUCER, LONG);
+    //random partition constant
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, PARTITION_RANDOM, LONG);
-    REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_REPORT_ON, LONG);
-    REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_REPORT_OFF, LONG);
+    //config constants:
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, RETRY_COUNT, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, RETRY_INTERVAL, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_DELIVERY, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, QUEUE_BUFFER_SIZE, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_MODE, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOGLEVEL, LONG);
+    //confirmation value constants
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_OFF, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_BASIC, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_EXTENDED, LONG);
     return SUCCESS;
 }
 
@@ -204,6 +223,11 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
     //init partitions to random partitions
     intern->consumer_partition = PHP_KAFKA_PARTITION_RANDOM;
     intern->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
+    //set default values
+    //basic confirmation (wait for success callback)
+    intern->delivery_confirm_mode = PHP_KAFKA_CONFIRM_BASIC;
+    //logging = default on (while in development, at least)
+    intern->log_level = PHP_KAFKA_LOG_ON;
 
     zend_object_std_init(&intern->std, class_type TSRMLS_CC);
     //add properties table
@@ -233,11 +257,22 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
 //clean current connections
 void free_kafka_connection(void *object TSRMLS_DC)
 {
+    int interval = 1;
     kafka_connection *connection = ((kafka_connection *) object);
+    //no confirmation, wait to close connection a bit longer, for what it's worth
+    if (connection->delivery_confirm_mode == PHP_KAFKA_CONFIRM_OFF)
+        interval = 50;
+
     if (connection->brokers)
         efree(connection->brokers);
     if (connection->compression)
         efree(connection->compression);
+    if (connection->queue_buffer)
+        efree(connection->queue_buffer);
+    if (connection->retry_count)
+        efree(connection->retry_count);
+    if (connection->retry_interval)
+        efree(connection->retry_interval);
     if (connection->consumer != NULL)
         kafka_destroy(
             connection->consumer,
@@ -246,27 +281,183 @@ void free_kafka_connection(void *object TSRMLS_DC)
     if (connection->producer != NULL)
         kafka_destroy(
             connection->producer,
-            1
+            interval
         );
     efree(connection);
 }
 
-/** {{{ proto void DOMDocument::__construct( string $brokers );
+static
+int is_number(const char *str)
+{
+    while (*str != '\0')
+    {
+        if (!isdigit(*str))
+            return 0;
+        ++str;
+    }
+    return 1;
+}
+
+//parse connection config array, and update connection struct
+static int parse_options_array(zval *arr, kafka_connection **conn)
+{
+    zval **entry;
+    char *assoc_key;
+    int key_len;
+    long idx;
+    HashPosition pos;
+    //make life easier, dereference struct
+    kafka_connection *connection = *conn;
+    zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(arr), &pos);
+    while (zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void **)&entry, &pos) == SUCCESS)
+    {
+        if (zend_hash_get_current_key_ex(Z_ARRVAL_P(arr), &assoc_key, &key_len, &idx, 0, &pos) == HASH_KEY_IS_STRING)
+        {
+            zend_throw_exception(kafka_exception, "Invalid option key, use class constants", 0 TSRMLS_CC);
+            return -1;
+        }
+        else
+        {
+            char tmp[128];
+            switch (idx)
+            {
+                case PHP_KAFKA_RETRY_COUNT:
+                    if (Z_TYPE_PP(entry) == IS_STRING && is_number(Z_STRVAL_PP(entry)))
+                    {
+                        if (connection->retry_count)
+                            efree(connection->retry_count);
+                        connection->retry_count = estrdup(Z_STRVAL_PP(entry));
+                    }
+                    else if (Z_TYPE_PP(entry) == IS_LONG)
+                    {
+                        if (connection->retry_count)
+                            efree(connection->retry_count);
+                        snprintf(tmp, 128, "%d", Z_LVAL_PP(entry));
+                        connection->retry_count = estrdup(tmp);
+                    }
+                    else
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid value for Kafka::RETRY_COUNT option, expected numeric value", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    break;
+                case PHP_KAFKA_RETRY_INTERVAL:
+                    if (Z_TYPE_PP(entry) == IS_STRING && is_number(Z_STRVAL_PP(entry)))
+                    {
+                        if (connection->retry_interval)
+                            efree(connection->retry_interval);
+                        connection->retry_interval = estrdup(Z_STRVAL_PP(entry));
+                    }
+                    else if (Z_TYPE_PP(entry) == IS_LONG)
+                    {
+                        if (connection->retry_interval)
+                            efree(connection->retry_interval);
+                        snprintf(tmp, 128, "%d", Z_LVAL_PP(entry));
+                        connection->retry_interval = estrdup(tmp);
+                    }
+                    else
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid value for Kafka::RETRY_INTERVAL option, expected numeric value", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    break;
+                case PHP_KAFKA_CONFIRM_DELIVERY:
+                    if (
+                        Z_TYPE_PP(entry) != IS_LONG
+                        ||
+                        (
+                            Z_LVAL_PP(entry) != PHP_KAFKA_CONFIRM_OFF
+                            &&
+                            Z_LVAL_PP(entry) != PHP_KAFKA_CONFIRM_BASIC
+                            &&
+                            Z_LVAL_PP(entry) != PHP_KAFKA_CONFIRM_EXTENDED
+                        )
+                    )
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid value for Kafka::CONFIRM_DELIVERY, use Kafka::CONFIRM_* constants", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    connection->delivery_confirm_mode = Z_LVAL_PP(entry);
+                    break;
+                case PHP_KAFKA_QUEUE_BUFFER_SIZE:
+                    if (Z_TYPE_PP(entry) == IS_STRING && is_number(Z_STRVAL_PP(entry)))
+                    {
+                        if (connection->queue_buffer)
+                            efree(connection->queue_buffer);
+                        connection->queue_buffer = estrdup(Z_STRVAL_PP(entry));
+                    }
+                    else if (Z_TYPE_PP(entry) == IS_LONG)
+                    {
+                        if (connection->queue_buffer)
+                            efree(connection->queue_buffer);
+                        snprintf(tmp, 128, "%d", Z_LVAL_PP(entry));
+                        connection->queue_buffer = estrdup(tmp);
+                    }
+                    else
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid value for Kafka::QUEUE_BUFFER_SIZE, expected numeric value", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    break;
+                case PHP_KAFKA_COMPRESSION_MODE:
+                    if (Z_TYPE_PP(entry) != IS_STRING)
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid type for Kafka::COMPRESSION_MODE option, use Kafka::COMPRESSION_* constants", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    if (
+                        !strcmp(Z_STRVAL_PP(entry), PHP_KAFKA_COMPRESSION_GZIP)
+                        &&
+                        !strcmp(Z_STRVAL_PP(entry), PHP_KAFKA_COMPRESSION_NONE)
+                        &&
+                        !strcmp(Z_STRVAL_PP(entry), PHP_KAFKA_COMPRESSION_SNAPPY)
+                    ) {
+                        zend_throw_exception(kafka_exception, "Invalid value for Kafka::COMPRESSION_MODE, use Kafka::COMPRESSION_* constants", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    if (connection->compression)
+                        efree(connection->compression);
+                    connection->compression = estrdup(Z_STRVAL_PP(entry));
+                    break;
+                case PHP_KAFKA_LOGLEVEL:
+                    if (Z_TYPE_PP(entry) != IS_LONG ||
+                        (Z_LVAL_PP(entry) != PHP_KAFKA_LOG_OFF && Z_LVAL_PP(entry) != PHP_KAFKA_LOG_ON))
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid value for Kafka::LOGLEVEL option, use Kafka::LOG_* constants", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    connection->log_level = Z_LVAL_PP(entry);
+                    break;
+            }
+        }
+        zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos);
+    }
+    return 0;
+}
+
+/** {{{ proto void DOMDocument::__construct( string $brokers [, array $options = null]);
     Constructor, expects a comma-separated list of brokers to connect to
 */
 PHP_METHOD(Kafka, __construct)
 {
+    zval *arr = NULL;
     char *brokers = NULL;
     int brokers_len = 0;
     kafka_connection *connection = (kafka_connection *) zend_object_store_get_object(
         getThis() TSRMLS_CC
     );
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s",
-            &brokers, &brokers_len) == FAILURE) {
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|a",
+            &brokers, &brokers_len, &arr) == FAILURE) {
         return;
     }
+    if (arr)
+    {
+        if (parse_options_array(arr, &connection))
+            return;//we've thrown an exception
+    }
     connection->brokers = estrdup(brokers);
+    kafka_set_log_level(connection->log_level);
     kafka_connect(brokers);
 }
 /* }}} end Kafka::__construct */
@@ -326,27 +517,38 @@ PHP_METHOD(Kafka, isConnected)
 */
 PHP_METHOD(Kafka, __destruct)
 {
+    int interval = 1;
     kafka_connection *connection = (kafka_connection *) zend_object_store_get_object(
         getThis() TSRMLS_CC
     );
+    if (connection->delivery_confirm_mode == PHP_KAFKA_CONFIRM_OFF)
+        interval = 25;
     if (connection->brokers)
         efree(connection->brokers);
+    if (connection->queue_buffer)
+        efree(connection->queue_buffer);
+    if (connection->retry_count)
+        efree(connection->retry_count);
+    if (connection->retry_interval)
+        efree(connection->retry_interval);
     if (connection->compression)
         efree(connection->compression);
     if (connection->consumer != NULL)
         kafka_destroy(
             connection->consumer,
-            10
+            1
         );
     if (connection->producer != NULL)
         kafka_destroy(
             connection->producer,
-            10
+            interval
         );
     connection->producer    = NULL;
     connection->brokers     = NULL;
     connection->compression = NULL;
     connection->consumer    = NULL;
+    connection->queue_buffer = connection->retry_count = connection->retry_interval = NULL;
+    connection->delivery_confirm_mode = 0;
     connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
 }
 /* }}} end Kafka::__destruct */
@@ -415,7 +617,9 @@ PHP_METHOD(Kafka, set_partition)
 */
 PHP_METHOD(Kafka, setLogLevel)
 {
-    zval *log_level;
+    zval *log_level,
+        *obj = getThis();
+    GET_KAFKA_CONNECTION(connection, obj);
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z", &log_level) == FAILURE)
     {
         return;//?
@@ -432,7 +636,8 @@ PHP_METHOD(Kafka, setLogLevel)
         zend_throw_exception(kafka_exception, "Invalid argument, use Kafka::LOG_* constants", 0 TSRMLS_CC);
         return;
     }
-    kafka_set_log_level(Z_LVAL_P(log_level));
+    connection->log_level = Z_LVAL_P(log_level);
+    kafka_set_log_level(connection->log_level);
     RETURN_ZVAL(getThis(), 1, 0);
 }
 /* }}} end Kafka::setLogLevel */
@@ -578,15 +783,21 @@ PHP_METHOD(Kafka, getTopics)
     if (connection->brokers == NULL && connection->consumer == NULL)
     {
         zend_throw_exception(kafka_exception, "No brokers to get topics from", 0 TSRMLS_CC);
+        return;
     }
     if (connection->consumer == NULL)
     {
-        connection->consumer = kafka_set_connection(
-            RD_KAFKA_CONSUMER,
-            connection->brokers,
-            0,
-            NULL
-        );
+        kafka_connection_params config;
+        config.type = RD_KAFKA_CONSUMER;
+        config.log_level = connection->log_level;
+        config.queue_buffer = connection->queue_buffer;
+        config.compression = NULL;
+        connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_CONSUMER;
     }
     array_init(return_value);
@@ -594,23 +805,24 @@ PHP_METHOD(Kafka, getTopics)
 }
 /* }}} end Kafka::getTopics */
 
-/* {{{ proto Kafka Kafka::setBrokers ( string $brokers )
+/* {{{ proto Kafka Kafka::setBrokers ( string $brokers [, array $options = null ] )
     Set brokers on-the-fly
 */
 PHP_METHOD(Kafka, setBrokers)
 {
-    zval *brokers,
+    zval *arr = NULL,
         *obj = getThis();
+    char *brokers;
+    int brokers_len;
     GET_KAFKA_CONNECTION(connection, obj);
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z",
-            &brokers) == FAILURE) {
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|a",
+            &brokers, &brokers_len, &arr) == FAILURE) {
         return;
     }
-    if (Z_TYPE_P(brokers) != IS_STRING || Z_STRLEN_P(brokers) == 0) {
-        zend_throw_exception(kafka_exception, "Kafka::setBrokers expects argument to be a non-empty string", 0 TSRMLS_CC);
+    //if array is passed, parse it, return if an exception was thrown...
+    if (arr && parse_options_array(arr, &connection))
         return;
-    }
     if (connection->consumer)
         kafka_destroy(connection->consumer, 1);
     if (connection->producer)
@@ -622,7 +834,7 @@ PHP_METHOD(Kafka, setBrokers)
         efree(connection->compression);
     //set brokers
     connection->brokers = estrdup(
-        Z_STRVAL_P(brokers)
+        brokers
     );
     //reinit to NULL
     connection->producer = connection->consumer = NULL;
@@ -639,6 +851,25 @@ PHP_METHOD(Kafka, setBrokers)
 }
 /* }}} end Kafka::setBrokers */
 
+/* proto Kafka Kafka::setOptions( array $options )
+ * Set connection options on the "fly"
+ */
+PHP_METHOD(Kafka, setOptions)
+{
+    zval *arr = NULL,
+        *obj = getThis();
+    GET_KAFKA_CONNECTION(connection, obj);
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "a", &arr) == FAILURE)
+    {
+        return;
+    }
+    if (parse_options_array(arr, &connection))
+        return;
+    RETURN_ZVAL(obj, 1, 0);
+
+}
+/* end proto Kafka::setOptions */
+
 /* {{{ proto array Kafka::getPartitionsForTopic( string $topic )
     Get an array of available partitions for a given topic
 */
@@ -654,7 +885,18 @@ PHP_METHOD(Kafka, getPartitionsForTopic)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0, NULL);
+        kafka_connection_params config;
+        config.type = RD_KAFKA_CONSUMER;
+        config.log_level = connection->log_level;
+        config.queue_buffer = connection->queue_buffer;
+        config.compression = NULL;
+        connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
+        connection->rk_type = RD_KAFKA_CONSUMER;
     }
     array_init(return_value);
     kafka_get_partitions(connection->consumer, return_value, topic);
@@ -681,7 +923,18 @@ PHP_METHOD(Kafka, getPartitionOffsets)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0, NULL);
+        kafka_connection_params config;
+        config.type = RD_KAFKA_CONSUMER;
+        config.log_level = connection->log_level;
+        config.queue_buffer = connection->queue_buffer;
+        config.compression = NULL;
+        connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
+        connection->rk_type = RD_KAFKA_CONSUMER;
     }
     kafka_r = kafka_partition_offsets(
         connection->consumer,
@@ -750,12 +1003,11 @@ PHP_METHOD(Kafka, disconnect)
         kafka_destroy(connection->producer, 1);
     connection->producer = connection->consumer = NULL;
     connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
-    connection->producer_reporting = PHP_KAFKA_OFFSET_REPORT_OFF;
     RETURN_TRUE;
 }
 /* }}} end Kafka::disconnect */
 
-/* {{{ proto Kafka Kafka::produce( string $topic, string $message [, int $reporting = null ]);
+/* {{{ proto Kafka Kafka::produce( string $topic, string $message);
     Produce a message, returns instance
     or throws KafkaException in case something went wrong
 */
@@ -765,44 +1017,42 @@ PHP_METHOD(Kafka, produce)
     GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     char *msg;
-    long reporting = connection->producer_reporting;
+    long reporting = connection->delivery_confirm_mode;
     int topic_len,
         msg_len,
         status = 0;
 
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|l",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss",
             &topic, &topic_len,
-            &msg, &msg_len, &reporting) == FAILURE) {
+            &msg, &msg_len) == FAILURE) {
         return;
-    }
-    //silently default to last setting (default 0)
-    if (reporting != PHP_KAFKA_OFFSET_REPORT_ON && reporting != PHP_KAFKA_OFFSET_REPORT_OFF)
-        reporting = connection->producer_reporting;
-    else if (reporting != connection->producer_reporting)
-    {
-        kafka_destroy(connection->producer, 1);
-        connection->producer = NULL;
-        connection->producer_reporting = reporting;
     }
     if (!connection->producer)
     {
-        connection->producer = kafka_set_connection(
-            RD_KAFKA_PRODUCER,
-            connection->brokers,
-            connection->producer_reporting,
-            connection->compression
-        );
+        kafka_connection_params config;
+        config.type = RD_KAFKA_PRODUCER;
+        config.log_level = connection->log_level;
+        config.reporting = connection->delivery_confirm_mode;
+        config.retry_count = connection->retry_count;
+        config.retry_interval = connection->retry_interval;
+        config.compression = connection->compression;
+        connection->producer = kafka_get_connection(config, connection->brokers);
+        if (connection->producer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
     kafka_set_partition(
         (int) connection->producer_partition
     );
-    if (connection->producer_reporting == PHP_KAFKA_OFFSET_REPORT_ON)
+    if (connection->delivery_confirm_mode == PHP_KAFKA_CONFIRM_EXTENDED)
         status = kafka_produce_report(connection->producer, topic, msg, msg_len);
     else
-        status = kafka_produce(connection->producer, topic, msg, msg_len);
+        status = kafka_produce(connection->producer, topic, msg, msg_len, connection->delivery_confirm_mode);
     switch (status)
     {
         case -1:
@@ -816,7 +1066,7 @@ PHP_METHOD(Kafka, produce)
 }
 /* }}} end Kafka::produce */
 
-/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages [, int $reporting ]);
+/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages);
     Produce a batch of messages, returns instance
     or throws exceptions in case of error
 */
@@ -830,35 +1080,33 @@ PHP_METHOD(Kafka, produceBatch)
     char *msg;
     char *msg_batch[50];
     int msg_batch_len[50] = {0};
-    long reporting;
+    long reporting = connection->delivery_confirm_mode;
     int topic_len,
         msg_len,
         current_idx = 0,
         status = 0;
     HashPosition pos;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa|l",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa",
             &topic, &topic_len,
             &arr) == FAILURE) {
         return;
     }
-    //silently default to last setting (default 0)
-    if (reporting != PHP_KAFKA_OFFSET_REPORT_ON && reporting != PHP_KAFKA_OFFSET_REPORT_OFF)
-        reporting = connection->producer_reporting;
-    else if (reporting != connection->producer_reporting)
-    {
-        kafka_destroy(connection->producer, 1);
-        connection->producer = NULL;
-        connection->producer_reporting = reporting;
-    }
     //get producer up and running
     if (!connection->producer)
     {
-        connection->producer = kafka_set_connection(
-            RD_KAFKA_PRODUCER,
-            connection->brokers,
-            connection->producer_reporting,
-            connection->compression
-        );
+        kafka_connection_params config;
+        config.type = RD_KAFKA_PRODUCER;
+        config.log_level = connection->log_level;
+        config.reporting = connection->delivery_confirm_mode;
+        config.retry_count = connection->retry_count;
+        config.compression = connection->compression;
+        config.retry_interval = connection->retry_interval;
+        connection->producer = kafka_get_connection(config, connection->brokers);
+        if (connection->producer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
         connection->rk_type = RD_KAFKA_PRODUCER;
     }
     //this does nothing at this stage...
@@ -878,7 +1126,7 @@ PHP_METHOD(Kafka, produceBatch)
             ++current_idx;
             if (current_idx == 50)
             {
-                status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx);
+                status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode);
                 if (status)
                 {
                     if (status < 0)
@@ -898,7 +1146,7 @@ PHP_METHOD(Kafka, produceBatch)
     }
     if (current_idx)
     {//we still have some messages to produce...
-        status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx);
+        status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode);
         if (status)
         {
             if (status < 0)
@@ -965,7 +1213,18 @@ PHP_METHOD(Kafka, consume)
     }
     if (!connection->consumer)
     {
-        connection->consumer = kafka_set_connection(RD_KAFKA_CONSUMER, connection->brokers, 0, NULL);
+        kafka_connection_params config;
+        config.type = RD_KAFKA_CONSUMER;
+        config.log_level = connection->log_level;
+        config.queue_buffer = connection->queue_buffer;
+        config.compression = NULL;
+        connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
+        connection->rk_type = RD_KAFKA_CONSUMER;
     }
     array_init(return_value);
     if (connection->consumer_partition == PHP_KAFKA_PARTITION_RANDOM)
