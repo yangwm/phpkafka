@@ -828,9 +828,12 @@ PHP_METHOD(Kafka, produceBatch)
     GET_KAFKA_CONNECTION(connection, object);
     char *topic;
     char *msg;
+    char *msg_batch[50];
+    int msg_batch_len[50] = {0};
     long reporting;
     int topic_len,
         msg_len,
+        current_idx = 0,
         status = 0;
     HashPosition pos;
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa|l",
@@ -870,52 +873,45 @@ PHP_METHOD(Kafka, produceBatch)
     {
         if (Z_TYPE_PP(entry) == IS_STRING)
         {
-            msg = Z_STRVAL_PP(entry);
-            msg_len = Z_STRLEN_PP(entry);
-            if (connection->producer_reporting == PHP_KAFKA_OFFSET_REPORT_ON)
-                status = kafka_produce_report(connection->producer, topic, msg, msg_len);
-            else
-                status = kafka_produce(connection->producer, topic, msg, msg_len);
-            switch (status)
+            msg_batch[current_idx] = Z_STRVAL_PP(entry);
+            msg_batch_len[current_idx] = Z_STRLEN_PP(entry);
+            ++current_idx;
+            if (current_idx == 50)
             {
-                case -1:
-                    zend_throw_exception(kafka_exception, "Failed to produce message", 0 TSRMLS_CC);
+                status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx);
+                if (status)
+                {
+                    if (status < 0)
+                        zend_throw_exception(kafka_exception, "Failed to produce messages", 0 TSRMLS_CC);
+                    else if (status > 0)
+                    {
+                        char err_msg[200];
+                        snprintf(err_msg, 200, "Produced messages with %d errors", status);
+                        zend_throw_exception(kafka_exception, err_msg, 0 TSRMLS_CC);
+                    }
                     return;
-                case -2:
-                    zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
-                    return;
+                }
+                current_idx = 0;//reset batch counter
             }
         }
         zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos);
     }
-    /*
-     * This bit is actually using the PHP7 array implementation
-     * num_idx is zend_ulong and str_idx is zend_string
-    ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(arr), num_idx, str_idx, entry)
-    {
-        if (Z_TYPE_P(entry) == IS_STRING)
+    if (current_idx)
+    {//we still have some messages to produce...
+        status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx);
+        if (status)
         {
-            msg = Z_STRVAL_P(entry);
-            msg_len = Z_STRLEN_P(entry);
-            status = kafka_produce(
-                connection->producer,
-                topic,
-                msg,
-                msg_len
-            );
-            switch (status)
+            if (status < 0)
+                zend_throw_exception(kafka_exception, "Failed to produce messages", 0 TSRMLS_CC);
+            else if (status > 0)
             {
-                case -1:
-                    zend_throw_exception(kafka_exception, "Failed to produce message", 0 TSRMLS_CC);
-                    return;
-                case -2:
-                    zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
-                    return;
+                char err_msg[200];
+                snprintf(err_msg, 200, "Produced messages with %d errors", status);
+                zend_throw_exception(kafka_exception, err_msg, 0 TSRMLS_CC);
             }
-
+            return;
         }
-    } ZEND_HASH_FOREACH_END();
-    */
+    }
     RETURN_ZVAL(object, 1, 0);
 }
 /* end proto Kafka::produceBatch */
