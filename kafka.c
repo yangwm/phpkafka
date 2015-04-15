@@ -451,7 +451,7 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
         err_cnt = 0;
 
     if (report)
-        opaque = (void *) &pcb;
+        opaque = &pcb;
     else
         opaque = NULL;
     rd_kafka_topic_conf_t *topic_conf;
@@ -536,7 +536,7 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report
 
     //decide whether to pass callback params or not...
     if (report)
-        opaque = (void *) &pcb;
+        opaque = &pcb;
     else
         opaque = NULL;
 
