@@ -629,13 +629,13 @@ void offset_queue_consume(rd_kafka_message_t *message, void *opaque)
                     rd_kafka_topic_name(message->rkt),
                     message->partition, message->offset);
             }
-            return;
         }
+        return;
     }
+    if (params->partition_offset[message->partition] == -1)
+        params->eop -= 1;
     //we have an offset, save it
     params->partition_offset[message->partition] = message->offset;
-    //less EOP's to fetch
-    params->eop -= 1;
     //tally read_count
     params->read_count += 1;
     if (params->auto_commit == 0)
@@ -878,12 +878,13 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
             rd_kafka_metadata_destroy(meta);
             return -1;
         }
-        //initialize memory: set all values to -2
-        memset(values, -2, meta->topics->partition_cnt * sizeof *values);
-        cb_params.eop = meta->topics->partition_cnt;
+        //we need eop to reach 0, if there are 4 partitions, start at 3 (0, 1, 2, 3)
+        cb_params.eop = meta->topics->partition_cnt -1;
         cb_params.partition_offset = values;
         for (i=0;i<meta->topics->partition_cnt;++i)
         {
+            //initialize: set to -2 for callback
+            values[i] = -2;
             if (rd_kafka_consume_start_queue(rkt, meta->topics->partitions[i].id, RD_KAFKA_OFFSET_BEGINNING, rkqu))
             {
                 if (log_level)
@@ -897,19 +898,17 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
                 continue;
             }
         }
-        //eiter eop reached 0, or read_count == nr of partitions
+        //eiter eop reached 0, or the read errors >= nr of partitions
         //either way, we've consumed a message from each partition, and therefore, we're done
-        while(cb_params.eop || cb_params.read_count < meta->topics->partition_cnt)
+        while(cb_params.eop && cb_params.error_count < meta->topics->partition_cnt)
             rd_kafka_consume_callback_queue(rkqu, 100, offset_queue_consume, &cb_params);
         //stop consuming for all partitions
         for (i=0;i<meta->topics->partition_cnt;++i)
             rd_kafka_consume_stop(rkt, meta->topics[0].partitions[i].id);
-        rd_kafka_metadata_destroy(meta);
-        meta = NULL;
         rd_kafka_queue_destroy(rkqu);
         //do we need this poll here?
-        while(rd_kafka_outq_len(rk) > 0)
-            rd_kafka_poll(rk, 5);
+        while(rd_kafka_outq_len(r) > 0)
+            rd_kafka_poll(r, 5);
 
         //let's be sure to pass along the correct values here...
         *partitions = values;
