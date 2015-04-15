@@ -34,7 +34,10 @@
 struct consume_cb_params {
     int read_count;
     zval *return_value;
-    int *partition_ends;
+    union {
+        int *partition_ends;
+        long *partition_offset;
+    };
     int error_count;
     int eop;
     int auto_commit;
@@ -451,7 +454,7 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
         err_cnt = 0;
 
     if (report)
-        opaque = (void *) &pcb;
+        opaque = &pcb;
     else
         opaque = NULL;
     rd_kafka_topic_conf_t *topic_conf;
@@ -536,7 +539,7 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report
 
     //decide whether to pass callback params or not...
     if (report)
-        opaque = (void *) &pcb;
+        opaque = &pcb;
     else
         opaque = NULL;
 
@@ -590,6 +593,57 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report
     //set global to NULL again
     rd_kafka_topic_destroy(rkt);
     return 0;
+}
+
+static
+void offset_queue_consume(rd_kafka_message_t *message, void *opaque)
+{
+    struct consume_cb_params *params = opaque;
+    if (params->eop == 0)
+        return;
+    if (message->err)
+    {
+        params->error_count += 1;
+        if (params->auto_commit == 0)
+            rd_kafka_offset_store(
+                message->rkt,
+                message->partition,
+                message->offset == 0 ? 0 : message->offset -1
+            );
+        if (message->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+        {
+            if (params->partition_offset[message->partition] == -2)
+            {//no previous message read from this partition
+             //set offset value to last possible value (-1 or last existing)
+             //reduce eop count
+                params->eop -= 1;
+                params->read_count += 1;
+                params->partition_offset[message->partition] = message->offset -1;
+            }
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_INFO,
+                    "phpkafka - %% Consumer reached end of %s [%"PRId32"] "
+                    "message queue at offset %"PRId64"\n",
+                    rd_kafka_topic_name(message->rkt),
+                    message->partition, message->offset);
+            }
+        }
+        return;
+    }
+    if (params->partition_offset[message->partition] == -1)
+        params->eop -= 1;
+    //we have an offset, save it
+    params->partition_offset[message->partition] = message->offset;
+    //tally read_count
+    params->read_count += 1;
+    if (params->auto_commit == 0)
+        rd_kafka_offset_store(
+            message->rkt,
+            message->partition,
+            message->offset == 0 ? 0 : message->offset -1
+        );
 }
 
 static
@@ -786,12 +840,14 @@ void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic)
  * if we're consuming messages without knowing the actual partition beforehand
  * @param int **partitions should be pointer to NULL, will be allocated here
  * @param const char * topic topic name
- * @return int (0 == success, all others indicate failure)
+ * @return int (0 == meta error, -2: no connection, -1: allocation error, all others indicate success (nr of elems in array))
  */
 int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
 {
-    rd_kafka_topic_t *rkt;
-    rd_kafka_topic_conf_t *conf;
+    rd_kafka_topic_t *rkt = NULL;
+    rd_kafka_topic_conf_t *conf = NULL;
+    rd_kafka_queue_t *rkqu = NULL;
+    struct consume_cb_params cb_params = {0, NULL, NULL, 0, 0, 0};
     int i = 0;
     //make life easier, 1 level of indirection...
     long *values = *partitions;
@@ -803,47 +859,58 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
             openlog("phpkafka", 0, LOG_USER);
             syslog(LOG_ERR, "phpkafka - no connection to get offsets of topic: %s", topic);
         }
-        return;
+        return -2;
     }
     /* Topic configuration */
     conf = rd_kafka_topic_conf_new();
 
     /* Create topic */
     rkt = rd_kafka_topic_new(r, topic, conf);
+    rkqu = rd_kafka_queue_new(rk);
     const struct rd_kafka_metadata *meta = NULL;
     if (RD_KAFKA_RESP_ERR_NO_ERROR == rd_kafka_metadata(r, 0, rkt, &meta, 5))
     {
         values = realloc(values, meta->topics->partition_cnt * sizeof *values);
-        if (values == NULL) {
+        if (values == NULL)
+        {
             *partitions = values;//possible corrupted pointer now
             //free metadata, return error
             rd_kafka_metadata_destroy(meta);
             return -1;
         }
-        for (i;i<meta->topics->partition_cnt;++i) {
-            //consume_start returns 0 on success
-            values[i] = -1;//initialize memory
-            if (rd_kafka_consume_start(rkt, i, RD_KAFKA_OFFSET_BEGINNING))
-                continue;
-            rd_kafka_message_t *rkmessage = rd_kafka_consume(rkt, i, 900),
-                    *rkmessage_return;
-
-            if (!rkmessage) /* timeout */
-              continue;
-
-            rkmessage_return = msg_consume(rkmessage, NULL);
-            if (rkmessage_return != NULL) {
-                values[i] = (int) rkmessage->offset;
-            } else {
-                //error consuming message, but partition is set
-                //Not very reliable, but something...
-                if (rkmessage->partition == i) {
-                    if (rkmessage->err != RD_KAFKA_RESP_ERR__PARTITION_EOF)
-                        values[i] = (int) rkmessage->offset;
+        //we need eop to reach 0, if there are 4 partitions, start at 3 (0, 1, 2, 3)
+        cb_params.eop = meta->topics->partition_cnt -1;
+        cb_params.partition_offset = values;
+        for (i=0;i<meta->topics->partition_cnt;++i)
+        {
+            //initialize: set to -2 for callback
+            values[i] = -2;
+            if (rd_kafka_consume_start_queue(rkt, meta->topics->partitions[i].id, RD_KAFKA_OFFSET_BEGINNING, rkqu))
+            {
+                if (log_level)
+                {
+                    openlog("phpkafka", 0, LOG_USER);
+                    syslog(LOG_ERR,
+                        "Failed to start consuming topic %s [%"PRId32"]",
+                        topic, meta->topics->partitions[i].id
+                    );
                 }
+                continue;
             }
-            rd_kafka_message_destroy(rkmessage);
         }
+        //eiter eop reached 0, or the read errors >= nr of partitions
+        //either way, we've consumed a message from each partition, and therefore, we're done
+        while(cb_params.eop && cb_params.error_count < meta->topics->partition_cnt)
+            rd_kafka_consume_callback_queue(rkqu, 100, offset_queue_consume, &cb_params);
+        //stop consuming for all partitions
+        for (i=0;i<meta->topics->partition_cnt;++i)
+            rd_kafka_consume_stop(rkt, meta->topics[0].partitions[i].id);
+        rd_kafka_queue_destroy(rkqu);
+        //do we need this poll here?
+        while(rd_kafka_outq_len(r) > 0)
+            rd_kafka_poll(r, 5);
+
+        //let's be sure to pass along the correct values here...
         *partitions = values;
         i = meta->topics->partition_cnt;
     }
