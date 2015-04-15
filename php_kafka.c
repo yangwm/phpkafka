@@ -942,12 +942,17 @@ PHP_METHOD(Kafka, getPartitionOffsets)
         topic
     );
     if (kafka_r < 1) {
-        const char *msg = kafka_r == 1 ? "Failed to get metadata" : "unknown partition count (or mem-error)";
+        const char *msg = NULL;
+        if (kafka_r)
+            msg = kafka_r == -2 ? "No kafka connection" : "Allocation error";
+        else
+            msg = "Failed to get metadata for topic";
         zend_throw_exception(
             kafka_exception,
             msg,
             0 TSRMLS_CC
         );
+        return;
     }
     array_init(return_value);
     for (i=0;i<kafka_r;++i) {
