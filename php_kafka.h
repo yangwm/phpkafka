@@ -93,6 +93,7 @@ static PHP_METHOD(Kafka, disconnect);
 static PHP_METHOD(Kafka, produceBatch);
 static PHP_METHOD(Kafka, produce);
 static PHP_METHOD(Kafka, consume);
+static PHP_METHOD(Kafka, consumeBatch);
 PHPAPI void kafka_connect(char *brokers);
 
 #endif
