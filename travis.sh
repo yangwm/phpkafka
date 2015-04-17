@@ -7,11 +7,13 @@ git clone https://github.com/EVODelavega/librdkafka.git
 echo ".....done....."
 cd librdkafka
 echo "....compiling librdkafka...."
-./configure && make && sudo install
+./configure && make
+sudo make install
 echo "....done...."
 cd ../../
 echo ".... ensure librdkafka is available....."
 sudo ldconfig
+rm -Rf tmp_build
 echo ".... start building extension....."
 phpize
 ./configure --enable-kafka
