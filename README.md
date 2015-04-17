@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=master)](https://travis-ci.org/EVODelavega/phpkafka)
+
 #This fork is still being actively developed
 
 Given that the original repo is no longer supported by the author, I've decided to keep working at this PHP-Kafka extension instead.
