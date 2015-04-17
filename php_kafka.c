@@ -233,7 +233,7 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
     //add properties table
 #if PHP_VERSION_ID < 50399
     zend_hash_copy(
-        interns->std.properties, &class_type->default_properties,
+        intern->std.properties, &class_type->default_properties,
         (copy_ctor_func_t)zval_add_ref,
         (void *)&tmp,
         sizeof tmp
@@ -942,7 +942,7 @@ PHP_METHOD(Kafka, getPartitionOffsets)
         topic
     );
     if (kafka_r < 1) {
-        const char *msg = NULL;
+        char *msg = NULL;
         if (kafka_r)
             msg = kafka_r == -2 ? "No kafka connection" : "Allocation error";
         else
