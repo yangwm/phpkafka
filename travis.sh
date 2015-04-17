@@ -8,9 +8,8 @@ echo ".....done....."
 cd librdkafka
 echo "....compiling librdkafka...."
 ./configure && make && sudo install
-echo "....done, now cleaning up...."
+echo "....done...."
 cd ../../
-rm -Rf tmp_build
 echo ".... ensure librdkafka is available....."
 sudo ldconfig
 echo ".... start building extension....."
