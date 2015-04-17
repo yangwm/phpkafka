@@ -1,4 +1,5 @@
-[![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=master)](https://travis-ci.org/EVODelavega/phpkafka)
+Master build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=master)](https://travis-ci.org/EVODelavega/phpkafka)
+Dev build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=consume-with-meta)](https://travis-ci.org/EVODelavega/phpkafka)
 
 #This fork is still being actively developed
 
