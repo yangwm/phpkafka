@@ -1,5 +1,5 @@
 --TEST--
-Test custom exception class
+Test ensuring all methods exist (major pain in the backside when adding new methods...)
 --FILE--
 <?php
 $kafka = new Kafka('localhost:9092');
