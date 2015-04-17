@@ -22,6 +22,7 @@ Changes that have happened thusfar:
 * Easy configuration: passing an array of options to the constructor, `setBrokers` or `setOptions` method like you would with `PDO`
 * Compression support added (when produing messages, a compressed message is returned _as-is_)
 * Each instance holds 2 distinct connections (at most): a producer and a consumer
+* CI (travis), though there is a lot of work to be done putting together useful tests
 
 Changes that are on the _TODO_ list include:
 
@@ -30,7 +31,6 @@ Changes that are on the _TODO_ list include:
 * Add custom exceptions (partially done)
 * Overall API improvements (!!)
 * Performance - it's what you make of it (test results varied from 2 messages/sec to 2.5 million messages per second - see examples below)
-* CI (travis)
 * Adding tests to the build (very much a work in progress)
 * PHP7 support
 
