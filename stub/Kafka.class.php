@@ -251,11 +251,20 @@ final class Kafka
      * Causing any overhead (internally, array is iterated, and produced
      * @param string $topic
      * @param array $messages
+     * @param int $batchSize = 50
      * @return $this
      * @throws \KafkaException
      */
-    public function produceBatch($topic, array $messages)
+    public function produceBatch($topic, array $messages, $batchSize = 50)
     {
+        if ($batchSize < 1) {
+            throw new KafkaException(
+                sprintf(
+                    '%s expects batchSize to be > 1',
+                    __METHOD__
+                )
+            );
+        }
         foreach ($messages as $msg) {
             //non-string messages are skipped silently ATM
             if (is_string($msg)) {
@@ -290,6 +299,29 @@ final class Kafka
             range($start, $start + $count),
             'the message at the offset $key'
         );
+    }
+
+    /**
+     * @param $topic
+     * @param $offset
+     * @param $count
+     * @param int $batchSize
+     * @return array
+     */
+    public function consumeBatch($topic, $offset, $batchSize = 50)
+    {
+        $this->connected = true;
+        if (!is_numeric($offset)) {
+            //0 or last message (whatever its offset might be)
+            $start = $offset == self::OFFSET_BEGIN ? 0 : 100;
+        } else {
+            $start = $offset;
+        }
+        if (!is_numeric($count)) {
+            //depending on amount of messages in topic
+            $count = 100;
+        }
+        return array_fill_keys(range($start, $count), 'messages');
     }
 
     /**
