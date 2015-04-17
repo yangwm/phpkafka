@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+echo "....Update packages....."
+sudo apt-get update
+
 echo "....fetching librdkafka dependency...."
 mkdir tmp_build
 cd tmp_build
@@ -11,6 +14,8 @@ echo "....compiling librdkafka...."
 echo "....done, now cleaning up...."
 cd ../../
 rm -Rf tmp_build
+echo ".... ensure php build tools are available....."
+sudo apt-get install php5-dev
 echo ".... start building extension....."
 phpize
 ./configure --enable-kafka
