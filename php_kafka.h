@@ -72,28 +72,7 @@ typedef struct _kafka_r {
 
 //attach kafka connection to module
 zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC);
-void free_kafka_connection(void *object TSRMLS_DC);
 
-/* Kafka class */
-static PHP_METHOD(Kafka, __construct);
-static PHP_METHOD(Kafka, __destruct);
-static PHP_METHOD(Kafka, setCompression);
-static PHP_METHOD(Kafka, getCompression);
-static PHP_METHOD(Kafka, set_partition);
-static PHP_METHOD(Kafka, setPartition);
-static PHP_METHOD(Kafka, getPartition);
-static PHP_METHOD(Kafka, setLogLevel);
-static PHP_METHOD(Kafka, getPartitionsForTopic);
-static PHP_METHOD(Kafka, getPartitionOffsets);
-static PHP_METHOD(Kafka, isConnected);
-static PHP_METHOD(Kafka, setBrokers);
-static PHP_METHOD(Kafka, setOptions);
-static PHP_METHOD(Kafka, getTopics);
-static PHP_METHOD(Kafka, disconnect);
-static PHP_METHOD(Kafka, produceBatch);
-static PHP_METHOD(Kafka, produce);
-static PHP_METHOD(Kafka, consume);
-static PHP_METHOD(Kafka, consumeBatch);
-PHPAPI void kafka_connect(char *brokers);
+void free_kafka_connection(void *object TSRMLS_DC);
 
 #endif
