@@ -117,6 +117,25 @@ ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_disconnect, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
 /* }}} end arginfo */
+static PHP_METHOD(Kafka, __construct);
+static PHP_METHOD(Kafka, __destruct);
+static PHP_METHOD(Kafka, setCompression);
+static PHP_METHOD(Kafka, getCompression);
+static PHP_METHOD(Kafka, set_partition);
+static PHP_METHOD(Kafka, setPartition);
+static PHP_METHOD(Kafka, getPartition);
+static PHP_METHOD(Kafka, setLogLevel);
+static PHP_METHOD(Kafka, getPartitionsForTopic);
+static PHP_METHOD(Kafka, getPartitionOffsets);
+static PHP_METHOD(Kafka, isConnected);
+static PHP_METHOD(Kafka, setBrokers);
+static PHP_METHOD(Kafka, setOptions);
+static PHP_METHOD(Kafka, getTopics);
+static PHP_METHOD(Kafka, disconnect);
+static PHP_METHOD(Kafka, produceBatch);
+static PHP_METHOD(Kafka, produce);
+static PHP_METHOD(Kafka, consume);
+static PHP_METHOD(Kafka, consumeBatch);
 
 /* decalre the class entries */
 zend_class_entry *kafka_ce;
