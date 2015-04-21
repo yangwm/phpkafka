@@ -17,9 +17,11 @@ phpize
 ./configure --enable-kafka
 make
 sudo make install
-sudo sh -c 'echo "extension=kafka.so" >> /etc/php5/conf.d/kafka.ini'
+sudo sh -c 'echo "extension=kafka.so" >> /etc/php5/fpm/conf.d/kafka.ini'
 #For CLI mode:
 sudo sh -c 'echo "extension=kafka.so" >> /etc/php5/cli/conf.d/20-kafka.ini'
+#For fpm:
+sudo service php5-fpm restart
 ```
 
 Examples:
