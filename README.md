@@ -1,5 +1,14 @@
 Master build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=master)](https://travis-ci.org/EVODelavega/phpkafka)
+
 Dev build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=consume-with-meta)](https://travis-ci.org/EVODelavega/phpkafka)
+
+SRP build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=feature%2FSRP)](https://travis-ci.org/EVODelavega/phpkafka)
+
+_Note:_
+
+Whatever gets merged into the master branch should work just fine. The main dev build is where small tweaks, bugfixes and minor improvements are tested (ie sort-of beta branch).
+
+The SRP build is a long-term dev branch, where I'm currently in the process of separating the monolithic `Kafka` class into various logical sub-classes (a `KafkaTopic` class, perhaps a `KafkaMeta` object, `KafkaConfig` is another candidate...) to make this extension as intuitive as I can.
 
 #This fork is still being actively developed
 
