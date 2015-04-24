@@ -1,5 +1,4 @@
-Build status: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=consume-with-meta)](https://travis-ci.org/EVODelavega/phpkafka)
-
+SRP build status: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=feature%2FSRP)](https://travis-ci.org/EVODelavega/phpkafka)
 ## Main dev-branch is here!
 
 This is, currently, the main development branch for this fork. To build the extension, nothing much has changed.
