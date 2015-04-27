@@ -234,17 +234,17 @@ void kafka_topic_resource_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
         prev->next = next;
     if (next)
         next->prev = prev;
-    owner->list_length -= 1;
+    topics->list_length -= 1;
     //close topic
     kafka_destroy_topic(node->topic);
     node->topic = NULL;
     efree(node->topic_name);
     efree(node);
-    if (owner->list_length < 1 && owner->connection)
+    if (topics->list_length < 1 && topics->connection)
     {//connection not reffed anywhere + no topics left
         kafka_destroy(owner->connection, 1);
-        owner->connection = NULL;
-        efree(owner);
+        topics->connection = NULL;
+        efree(topics);
     }
 }
 
