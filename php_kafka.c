@@ -220,13 +220,32 @@ void remove_topic_node(struct topic_list_node *node, struct topic_list *owner)
 static
 void kafka_topic_resource_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 {
-    struct topic_list *topics = (struct topic_list *)rsrc->ptr;
-    //clear all topic nodes in list
-    while (topics->list_length > 0)
-    {
-        remove_topic_node(topics->head, topics);
+    struct topic_list_node *prev,
+                           *next,
+                           *node = (struct topic_list_node *)rsrc->ptr;
+    struct topic_list *topics = node->owner;
+    prev = node->prev;
+    next = node->next;
+    if (topics->head == node)
+        topics->head = next;
+    if (topics->tail == node)
+        topics->tail = next;
+    if (prev)
+        prev->next = next;
+    if (next)
+        next->prev = prev;
+    owner->list_length -= 1;
+    //close topic
+    kafka_destroy_topic(node->topic);
+    node->topic = NULL;
+    efree(node->topic_name);
+    efree(node);
+    if (owner->list_length < 1 && owner->connection)
+    {//connection not reffed anywhere + no topics left
+        kafka_destroy(owner->connection, 1);
+        owner->connection = NULL;
+        efree(owner);
     }
-    efree(topics);
 }
 
 PHP_MINIT_FUNCTION(kafka)
@@ -966,6 +985,7 @@ PHP_METHOD(Kafka, getTopic)
         list->list_length += 1;
         node->offset = list->list_length;
     }
+    node->owner = list;//add ptr to owning struct
     ALLOC_INIT_ZVAL(list_resource);
     //@TODO -> change the resource type: the node is the resource, the list is our internal handle on it
     //We HAVE to add a ptr to the list in our node, so we can manage everything!
