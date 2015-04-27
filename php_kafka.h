@@ -56,12 +56,14 @@ PHP_RSHUTDOWN_FUNCTION(kafka);
 
 struct topic_list_node {
     rd_kafka_topic_t *topic;
+    char *topic_name;
     int offset;
     struct topic_list_node *prev;
     struct topic_list_node *next;
 };
 
 struct topic_list {
+    rd_kafka_t *connection;
     int list_length;
     struct topic_list_node *head;
     struct topic_list_node *tail;
@@ -71,6 +73,8 @@ typedef struct _kafka_r {
     zend_object         std;
     rd_kafka_t          *consumer;
     rd_kafka_t          *producer;
+    struct topic_list   *consume_topics;
+    struct topic_list   *produce_topics;
     char                *brokers;
     char                *compression;
     char                *retry_count;

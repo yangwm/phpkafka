@@ -358,15 +358,19 @@ void free_kafka_connection(void *object TSRMLS_DC)
     if (connection->retry_interval)
         efree(connection->retry_interval);
     if (connection->consumer != NULL)
-        kafka_destroy(
-            connection->consumer,
-            1
-        );
+    {
+        if (!connection->consume_topics || connection->consume_topics->list_length < 1)
+            kafka_destroy(connection->consumer, 1);
+        else
+            connection->consume_topics->connection = connection->consumer;
+    }
     if (connection->producer != NULL)
-        kafka_destroy(
-            connection->producer,
-            interval
-        );
+    {
+        if (!connection->produce_topics || connection->produce_topics->list_length < 1)
+            kafka_destroy(connection->producer, interval);
+        else
+            connection->produce_topics->connection = connection->producer;
+    }
     efree(connection);
 }
 
@@ -618,15 +622,19 @@ PHP_METHOD(Kafka, __destruct)
     if (connection->compression)
         efree(connection->compression);
     if (connection->consumer != NULL)
-        kafka_destroy(
-            connection->consumer,
-            1
-        );
+    {
+        if (!connection->consume_topics || connection->consume_topics->list_length < 1)
+            kafka_destroy(connection->consumer, 1);
+        else
+            connection->consume_topics->connection = connection->consumer;
+    }
     if (connection->producer != NULL)
-        kafka_destroy(
-            connection->producer,
-            interval
-        );
+    {
+        if (!connection->produce_topics || connection->produce_topics->list_length < 1)
+            kafka_destroy(connection->producer, 1);
+        else
+            connection->produce_topics->connection = connection->producer;
+    }
     connection->producer    = NULL;
     connection->brokers     = NULL;
     connection->compression = NULL;
@@ -752,7 +760,12 @@ PHP_METHOD(Kafka, setCompression)
         {
             //close connections, if any, currently only use compression for producers
             if (connection->producer)
-                kafka_destroy(connection->producer, 1);
+            {
+                if (!connection->produce_topics || connection->produce_topics->list_length < 1)
+                    kafka_destroy(connection->producer, 1);
+                else
+                    connection->produce_topics->connection = connection->producer;
+            }
             connection->producer = NULL;
             connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
             connection->compression = estrdup(arg);
@@ -863,10 +876,12 @@ PHP_METHOD(Kafka, getPartition)
 PHP_METHOD(Kafka, getTopic)
 {
     zval *obj = getThis();
+    zval *list_resource = NULL;
     GET_KAFKA_CONNECTION(connection, obj);
     char *topic;
     int topic_len;
     long mode;
+    struct topic_list *list = NULL;
     rd_kafka_t *conn = NULL;
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &topic, &topic_len, &mode) == FAILURE)
         return;
@@ -877,47 +892,84 @@ PHP_METHOD(Kafka, getTopic)
     }
     if (mode == PHP_KAFKA_MODE_CONSUMER)
     {
-        kafka_connection_params config;
-        config.type = RD_KAFKA_CONSUMER;
-        config.log_level = connection->log_level;
-        config.queue_buffer = connection->queue_buffer;
-        config.compression = NULL;
-        connection->consumer = kafka_get_connection(config, connection->brokers);
-        if (connection->consumer == NULL)
+        if (!connection->consumer)
         {
-            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
-            return;
+            kafka_connection_params config;
+            config.type = RD_KAFKA_CONSUMER;
+            config.log_level = connection->log_level;
+            config.queue_buffer = connection->queue_buffer;
+            config.compression = NULL;
+            connection->consumer = kafka_get_connection(config, connection->brokers);
+            if (connection->consumer == NULL)
+            {
+                zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+                return;
+            }
+            connection->rk_type = RD_KAFKA_CONSUMER;
         }
-        connection->rk_type = RD_KAFKA_CONSUMER;
+        else if (connection->consume_topics)
+        {
+            list = connection->consume_topics;
+        }
         conn = connection->consumer;
     }
     else
     {
-        kafka_connection_params config;
-        config.type = RD_KAFKA_PRODUCER;
-        config.log_level = connection->log_level;
-        config.reporting = connection->delivery_confirm_mode;
-        config.retry_count = connection->retry_count;
-        config.retry_interval = connection->retry_interval;
-        config.compression = connection->compression;
-        connection->producer = kafka_get_connection(config, connection->brokers);
-        if (connection->producer == NULL)
+        if (!connection->producer)
         {
-            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
-            return;
+            kafka_connection_params config;
+            config.type = RD_KAFKA_PRODUCER;
+            config.log_level = connection->log_level;
+            config.reporting = connection->delivery_confirm_mode;
+            config.retry_count = connection->retry_count;
+            config.retry_interval = connection->retry_interval;
+            config.compression = connection->compression;
+            connection->producer = kafka_get_connection(config, connection->brokers);
+            if (connection->producer == NULL)
+            {
+                zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+                return;
+            }
+            connection->rk_type = RD_KAFKA_PRODUCER;
         }
-        connection->rk_type = RD_KAFKA_PRODUCER;
+        else if (connection->produce_topics)
+        {
+            list = connection->produce_topics;
+        }
         conn = connection->producer;
     }
-    struct topic_list *list = emalloc(sizeof *list);
-    list->list_length = 1;
-    struct topic_list_node *node = emalloc(sizeof *node);//create node (move to ctor handle)
-    list->head = node;
-    list->tail = node;
-    node->prev = NULL;
+    //create node, move this to KafkaTopic ctor handle
+    struct topic_list_node *node = emalloc(sizeof *node);
+    //@todo: check NULL ptr!
+    //initialize everything nicely:
+    node->topic_name = estrdup(topic);
     node->next = NULL;
-    node->offset = 0;
-    node->topic = kafka_get_topic(conn, topic);
+    if (list == NULL)
+    {
+        list = emalloc(sizeof *list);
+        list->list_length = 1;
+        //initialize to NULL, that way, we can check if KafkaTopic is the only instance
+        //that can access (and thus close) the kafka connection used by rd_kafka_topic_t*
+        list->connection = NULL;
+        list->head = node;
+        list->tail = node;
+        node->prev = NULL;
+        node->next = NULL;
+        node->offset = 0;
+        node->topic = kafka_get_topic(conn, topic);
+    }
+    else
+    {
+        list->tail->next = node;
+        node->prev = list->tail;
+        list->tail = node;
+        list->list_length += 1;
+        node->offset = list->list_length;
+    }
+    ALLOC_INIT_ZVAL(list_resource);
+    //@TODO -> change the resource type: the node is the resource, the list is our internal handle on it
+    //We HAVE to add a ptr to the list in our node, so we can manage everything!
+    ZEND_REGISTER_RESOURCE(list_resource, list, le_kafka_connection);
 }
 
 /* {{{ proto array Kafka::getTopics( void )
@@ -971,9 +1023,19 @@ PHP_METHOD(Kafka, setBrokers)
     if (arr && parse_options_array(arr, &connection))
         return;
     if (connection->consumer)
-        kafka_destroy(connection->consumer, 1);
+    {
+        if (!connection->consume_topics || connection->consume_topics->list_length < 1)
+            kafka_destroy(connection->consumer, 1);
+        else
+            connection->consume_topics->connection = connection->consumer;
+    }
     if (connection->producer)
-        kafka_destroy(connection->producer, 1);
+    {
+        if (!connection->produce_topics || connection->produce_topics->list_length < 1)
+            kafka_destroy(connection->producer, 1);
+        else
+            connection->produce_topics->connection = connection->producer;
+    }
     //free previous brokers value, if any
     if (connection->brokers)
         efree(connection->brokers);
@@ -1137,22 +1199,45 @@ PHP_METHOD(Kafka, disconnect)
         }
         if (type == PHP_KAFKA_MODE_CONSUMER)
         {//disconnect consumer
+            //only TRULY disconnect the handle if there are no topics using the connection
             if (connection->consumer)
-                kafka_destroy(connection->consumer, 1);
+            {
+                if (!connection->consume_topics || connection->consume_topics->list_length < 1)
+                    kafka_destroy(connection->consumer, 1);
+                else
+                    //make sure we can close this connection cleanly afterwards, though
+                    connection->consume_topics->connection = connection->consumer;
+            }
             connection->consumer = NULL;
         }
         else
         {
             if (connection->producer)
-                kafka_destroy(connection->producer, 1);
+            {
+                if (!connection->produce_topics || connection->produce_topics->list_length < 1)
+                    kafka_destroy(connection->producer, 1);
+                else
+                    connection->produce_topics->connection = connection->producer;
+            }
             connection->producer = NULL;
         }
         RETURN_TRUE;
     }
     if (connection->consumer)
-        kafka_destroy(connection->consumer, 1);
+    {
+        if (!connection->consume_topics || connection->consume_topics->list_length < 1)
+            kafka_destroy(connection->consumer, 1);
+        else
+            //make sure we can close this connection cleanly afterwards, though
+            connection->consume_topics->connection = connection->consumer;
+    }
     if (connection->producer)
-        kafka_destroy(connection->producer, 1);
+    {
+        if (!connection->produce_topics || connection->produce_topics->list_length < 1)
+            kafka_destroy(connection->producer, 1);
+        else
+            connection->produce_topics->connection = connection->producer;
+    }
     connection->producer = connection->consumer = NULL;
     connection->consumer_partition = connection->producer_partition = PHP_KAFKA_PARTITION_RANDOM;
     RETURN_TRUE;
