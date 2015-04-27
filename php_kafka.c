@@ -474,18 +474,22 @@ PHP_METHOD(Kafka, __construct)
         getThis() TSRMLS_CC
     );
 
+    //force constructor to throw exceptions in case of an error
+    zend_replace_error_handling(EH_THROW, kafka_exception, NULL TSRMLS_CC);
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|a",
-            &brokers, &brokers_len, &arr) == FAILURE) {
-        return;
-    }
-    if (arr)
+            &brokers, &brokers_len, &arr) == SUCCESS)
     {
-        if (parse_options_array(arr, &connection))
+        if (arr && parse_options_array(arr, &connection))
+        {//if above is true, an array was passed, but it was invalid
+            //restore normal error handling
+            zend_replace_error_handling(EH_NORMAL, NULL, NULL TSRMLS_CC);
             return;//we've thrown an exception
+        }
+        connection->brokers = estrdup(brokers);
+        kafka_set_log_level(connection->log_level);
+        kafka_connect(brokers);
     }
-    connection->brokers = estrdup(brokers);
-    kafka_set_log_level(connection->log_level);
-    kafka_connect(brokers);
+    zend_replace_error_handling(EH_NORMAL, NULL, NULL TSRMLS_CC);
 }
 /* }}} end Kafka::__construct */
 
