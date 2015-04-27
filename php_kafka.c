@@ -51,6 +51,16 @@ ZEND_GET_MODULE(kafka)
         thisObj TSRMLS_CC \
     )
 
+#define PHP_TOPIC_RES_NAME "Kafka topic"
+
+//add resource, we need to pass connections to KafkaTopic instances
+int le_kafka_connection;
+
+struct connection_topics {
+    int topic_refs;
+    struct topic_list *list;
+};
+
 /* {{{ arginfo */
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka__constr, 0, 0, 1)
     ZEND_ARG_INFO(0, brokers)
@@ -85,6 +95,11 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, message)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_get_topic, 0)
+    ZEND_ARG_INFO(0, topic)
+    ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce_batch, 0, 0, 2)
@@ -130,6 +145,7 @@ static PHP_METHOD(Kafka, getPartitionOffsets);
 static PHP_METHOD(Kafka, isConnected);
 static PHP_METHOD(Kafka, setBrokers);
 static PHP_METHOD(Kafka, setOptions);
+static PHP_METHOD(Kafka, getTopic);
 static PHP_METHOD(Kafka, getTopics);
 static PHP_METHOD(Kafka, disconnect);
 static PHP_METHOD(Kafka, produceBatch);
@@ -156,6 +172,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, getPartitionOffsets, arginf_kafka_get_partitions_for_topic, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, setBrokers, arginf_kafka__constr, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, setOptions, arginf_kafka_set_options, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getTopic, arginf_kafka_get_topic, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getTopics, arginf_kafka_void, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, disconnect, arginf_kafka_disconnect, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, isConnected, arginf_kafka_is_conn, ZEND_ACC_PUBLIC)
@@ -178,6 +195,39 @@ zend_module_entry kafka_module_entry = {
     PHP_KAFKA_VERSION, /* Replace with version number for your extension */
     STANDARD_MODULE_PROPERTIES
 };
+
+static
+void remove_topic_node(struct topic_list_node *node, struct topic_list *owner)
+{
+    //call kafka function to destroy topic connection
+    kafka_destroy_topic(node->topic);
+    struct topic_list_node *prev = node->prev,
+            *next = node->next;
+    if (prev == NULL)
+        owner->head = next;
+    else
+        prev->next = next;
+    if (next == NULL)
+        owner->tail = prev;
+    else
+        next->prev = prev;
+    //closed connection, set to NULL
+    node->topic = NULL;
+    owner->list_length -= 1;
+    efree(node);//no refs left, I suspect
+}
+
+static
+void kafka_topic_resource_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
+{
+    struct topic_list *topics = (struct topic_list *)rsrc->ptr;
+    //clear all topic nodes in list
+    while (topics->list_length > 0)
+    {
+        remove_topic_node(topics->head, topics);
+    }
+    efree(topics);
+}
 
 PHP_MINIT_FUNCTION(kafka)
 {
@@ -220,6 +270,13 @@ PHP_MINIT_FUNCTION(kafka)
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_OFF, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_BASIC, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_EXTENDED, LONG);
+    //dtor for our internal resource type:
+    le_kafka_connection = zend_register_list_destructors_ex(
+        kafka_topic_resource_dtor,
+        NULL,
+        PHP_TOPIC_RES_NAME,
+        module_number
+    );
     return SUCCESS;
 }
 
@@ -799,6 +856,69 @@ PHP_METHOD(Kafka, getPartition)
     RETURN_LONG(connection->producer_partition);
 }
 /* }}} end proto Kafka::getPartition */
+
+/* {{{ proto KafkaTopic Kafka::getTopic( string $topic, int $mode )
+        get a kafka topic (for specific mode -> produce/consume)
+*/
+PHP_METHOD(Kafka, getTopic)
+{
+    zval *obj = getThis();
+    GET_KAFKA_CONNECTION(connection, obj);
+    char *topic;
+    int topic_len;
+    long mode;
+    rd_kafka_t *conn = NULL;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &topic, &topic_len, &mode) == FAILURE)
+        return;
+    if (topic_len < 1 || (mode != PHP_KAFKA_MODE_CONSUMER && mode != PHP_KAFKA_MODE_PRODUCER))
+    {
+        zend_throw_exception(kafka_exception, "Invalid arguments supplied for Kafka::getTopic", 0 TSRMLS_CC);
+        return;
+    }
+    if (mode == PHP_KAFKA_MODE_CONSUMER)
+    {
+        kafka_connection_params config;
+        config.type = RD_KAFKA_CONSUMER;
+        config.log_level = connection->log_level;
+        config.queue_buffer = connection->queue_buffer;
+        config.compression = NULL;
+        connection->consumer = kafka_get_connection(config, connection->brokers);
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
+        connection->rk_type = RD_KAFKA_CONSUMER;
+        conn = connection->consumer;
+    }
+    else
+    {
+        kafka_connection_params config;
+        config.type = RD_KAFKA_PRODUCER;
+        config.log_level = connection->log_level;
+        config.reporting = connection->delivery_confirm_mode;
+        config.retry_count = connection->retry_count;
+        config.retry_interval = connection->retry_interval;
+        config.compression = connection->compression;
+        connection->producer = kafka_get_connection(config, connection->brokers);
+        if (connection->producer == NULL)
+        {
+            zend_throw_exception(kafka_exception, "Failed to connect to kafka", 0 TSRMLS_CC);
+            return;
+        }
+        connection->rk_type = RD_KAFKA_PRODUCER;
+        conn = connection->producer;
+    }
+    struct topic_list *list = emalloc(sizeof *list);
+    list->list_length = 1;
+    struct topic_list_node *node = emalloc(sizeof *node);//create node (move to ctor handle)
+    list->head = node;
+    list->tail = node;
+    node->prev = NULL;
+    node->next = NULL;
+    node->offset = 0;
+    node->topic = kafka_get_topic(conn, topic);
+}
 
 /* {{{ proto array Kafka::getTopics( void )
     Get all existing topics

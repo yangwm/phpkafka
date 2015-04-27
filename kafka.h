@@ -41,6 +41,9 @@ int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_le
 int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt, int report);
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level, const char *compression);
 rd_kafka_t *kafka_get_connection(kafka_connection_params params, const char *brokers);
+//connect & disconnect for topics...
+rd_kafka_topic_t *kafka_get_topic(rd_kafka_t* r, char *topic);
+void kafka_destroy_topic(rd_kafka_topic_t *topic);
 int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count, int partition);
 int kafka_consume_batch(rd_kafka_t *r, zval* return_value, char *topic, char *offset, long item_count, int partition);
 void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic);

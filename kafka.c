@@ -835,6 +835,38 @@ void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic)
     }
 }
 
+rd_kafka_topic_t *kafka_get_topic(rd_kafka_t* r, char *topic)
+{
+    rd_kafka_topic_t *rkt = NULL;
+    rd_kafka_topic_conf_t *conf = rd_kafka_topic_conf_new();
+    if (conf == NULL)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "failed to create config object for topic: %s", topic);
+        }
+        return rkt;//return null
+    }
+    rkt = rd_kafka_topic_new(r, topic, conf);
+    if (rkt == NULL)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_ERR, "failed to get topic: %s", topic);
+        }
+        rd_kafka_topic_conf_destroy(conf);
+        return rkt;//return null
+    }
+    return rkt;
+}
+
+void kafka_destroy_topic(rd_kafka_topic_t *topic)
+{
+    rd_kafka_topic_destroy(topic);
+}
+
 /**
  * @brief Get all partitions for topic and their beginning offsets, useful
  * if we're consuming messages without knowing the actual partition beforehand

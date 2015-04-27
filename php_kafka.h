@@ -54,6 +54,19 @@ PHP_RSHUTDOWN_FUNCTION(kafka);
 
 #define PHP_KAFKA_PARTITION_RANDOM RD_KAFKA_PARTITION_UA
 
+struct topic_list_node {
+    rd_kafka_topic_t *topic;
+    int offset;
+    struct topic_list_node *prev;
+    struct topic_list_node *next;
+};
+
+struct topic_list {
+    int list_length;
+    struct topic_list_node *head;
+    struct topic_list_node *tail;
+};
+
 typedef struct _kafka_r {
     zend_object         std;
     rd_kafka_t          *consumer;

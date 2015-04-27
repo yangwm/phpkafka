@@ -6,7 +6,7 @@ $kafka = new Kafka('localhost:9092');
 var_dump(get_class_methods($kafka));
 ?>
 --EXPECT--
-array(19) {
+array(20) {
   [0]=>
   string(11) "__construct"
   [1]=>
@@ -32,18 +32,19 @@ array(19) {
   [11]=>
   string(10) "setOptions"
   [12]=>
-  string(9) "getTopics"
+  string(8) "getTopic"
   [13]=>
-  string(10) "disconnect"
+  string(9) "getTopics"
   [14]=>
-  string(11) "isConnected"
+  string(10) "disconnect"
   [15]=>
-  string(7) "produce"
+  string(11) "isConnected"
   [16]=>
-  string(12) "produceBatch"
+  string(7) "produce"
   [17]=>
-  string(7) "consume"
+  string(12) "produceBatch"
   [18]=>
+  string(7) "consume"
+  [19]=>
   string(12) "consumeBatch"
 }
-
