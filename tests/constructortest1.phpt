@@ -3,7 +3,7 @@ Test constructor arguments (config array)
 --FILE--
 <?php
 try {
-    $kafka = new Kafka('localhost:9092', [Kafka::LOGLEVEL => 123]);
+    $kafka = new Kafka('localhost:9092', array(Kafka::LOGLEVEL => 123));
 } catch (KafkaException $e) {
     var_dump($e->getMessage());
 }
