@@ -174,7 +174,7 @@ zend_module_entry kafka_module_entry = {
     PHP_MSHUTDOWN(kafka), /* Module shutdown */
     PHP_RINIT(kafka), /* Request init */
     PHP_RSHUTDOWN(kafka), /* Request shutdown */
-    NULL, /* Module information */
+    PHP_MINFO(kafka), /* Module information */
     PHP_KAFKA_VERSION, /* Replace with version number for your extension */
     STANDARD_MODULE_PROPERTIES
 };
@@ -236,6 +236,31 @@ PHP_RINIT_FUNCTION(kafka)
 PHP_MSHUTDOWN_FUNCTION(kafka)
 {
     return SUCCESS;
+}
+
+PHP_MINFO_FUNCTION(kafka)
+{
+    char buffer[50];
+    snprintf(
+        buffer,
+        50,
+        "librdkafka version: %x.%x.%x.%x",
+        (RD_KAFKA_VERSION & 0xFF000000) >> 24, //major
+        (RD_KAFKA_VERSION & 0x00FF0000) >> 16, //minor
+        (RD_KAFKA_VERSION & 0x0000FF00) >> 8,  //revision
+        (RD_KAFKA_VERSION & 0x000000FF)        //unused ATM
+    );
+    php_info_print_table_start();
+    php_info_print_table_header(2, "Directive", "Value");
+    php_info_print_table_row(2, "Kafka enabled", "True");
+    php_info_print_table_row(2, "Kafka extension version", PHP_KAFKA_VERSION);
+    php_info_print_table_row(2, "Kafka support", "version <= 0.8");
+    php_info_print_table_row(2, "Kafka C-Client", buffer);
+    php_info_print_table_row(2, "ZooKeeper support", "Not supported");
+    php_info_print_table_row(2, "Compression support", "Gzip, Snappy");
+    php_info_print_table_end();
+    //not just yet:
+    //DISPLAY_INI_ENTRIES();
 }
 
 zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC)
