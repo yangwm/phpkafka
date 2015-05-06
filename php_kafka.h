@@ -19,7 +19,7 @@
 #ifndef PHP_KAFKA_H
 #define	PHP_KAFKA_H 1
 
-#define PHP_KAFKA_VERSION "0.1.0-dev"
+#define PHP_KAFKA_VERSION "0.2.0-dev"
 #define PHP_KAFKA_EXTNAME "kafka"
 #define PHP_KAFKA_OFFSET_BEGIN "beginning"
 #define PHP_KAFKA_OFFSET_END "end"
