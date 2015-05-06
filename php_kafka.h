@@ -19,7 +19,7 @@
 #ifndef PHP_KAFKA_H
 #define	PHP_KAFKA_H 1
 
-#define PHP_KAFKA_VERSION "0.2.1-dev"
+#define PHP_KAFKA_VERSION "0.2.2-dev"
 #define PHP_KAFKA_EXTNAME "kafka"
 #define PHP_KAFKA_OFFSET_BEGIN "beginning"
 #define PHP_KAFKA_OFFSET_END "end"
@@ -46,6 +46,7 @@ PHP_MSHUTDOWN_FUNCTION(kafka);
 PHP_MINIT_FUNCTION(kafka);
 PHP_RINIT_FUNCTION(kafka);
 PHP_RSHUTDOWN_FUNCTION(kafka);
+PHP_MINFO_FUNCTION(kafka);
 
 #ifdef ZTS
 #include <TSRM.h>
