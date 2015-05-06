@@ -19,3 +19,5 @@ phpize
 ./configure --enable-kafka
 make
 NO_INTERACTION=1 make test
+#exit with make test exit code
+exit $?
