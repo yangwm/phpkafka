@@ -22,6 +22,8 @@ final class Kafka
     const QUEUE_BUFFER_SIZE = 8;
     const COMPRESSION_MODE = 16;
     const LOGLEVEL = 32;
+    const PRODUCE_BATCH_SIZE = 64;
+    const CONSUME_BATCH_SIZE = 128;
 
     /**
      * This property does not exist, connection status
@@ -49,6 +51,18 @@ final class Kafka
      * Internal property to track use of compression when producing messages
      */
     private $compression = self::COMPRESSION_NONE;
+
+    /**
+     * @var int
+     * Internal property to default the produce batch size to
+     */
+    private $produceBatchSize = 50;
+
+    /**
+     * @var int
+     * Internal property to default the consume batch size to
+     */
+    private $consumeBatchSize = 50;
 
     /**
      * @param string $brokers
@@ -251,12 +265,14 @@ final class Kafka
      * Causing any overhead (internally, array is iterated, and produced
      * @param string $topic
      * @param array $messages
-     * @param int $batchSize = 50
+     * @param int|null $batchSize = null
      * @return $this
      * @throws \KafkaException
      */
-    public function produceBatch($topic, array $messages, $batchSize = 50)
+    public function produceBatch($topic, array $messages, $batchSize = null)
     {
+        if (!$batchSize)
+            $batchSize = $this->produceBatchSize;
         if ($batchSize < 1) {
             throw new KafkaException(
                 sprintf(
@@ -305,11 +321,13 @@ final class Kafka
      * @param $topic
      * @param $offset
      * @param $count
-     * @param int $batchSize
+     * @param int|null $batchSize = null
      * @return array
      */
-    public function consumeBatch($topic, $offset, $batchSize = 50)
+    public function consumeBatch($topic, $offset, $batchSize = null)
     {
+        if ($batchSize === null)
+            $batchSize = $this->consumeBatchSize;
         $this->connected = true;
         if (!is_numeric($offset)) {
             //0 or last message (whatever its offset might be)
