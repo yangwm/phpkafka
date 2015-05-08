@@ -216,6 +216,8 @@ PHP_MINIT_FUNCTION(kafka)
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, QUEUE_BUFFER_SIZE, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_MODE, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, LOGLEVEL, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, PRODUCE_BATCH_SIZE, LONG);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONSUME_BATCH_SIZE, LONG);
     //confirmation value constants
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_OFF, LONG);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, CONFIRM_BASIC, LONG);
@@ -280,6 +282,8 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
     intern->delivery_confirm_mode = PHP_KAFKA_CONFIRM_BASIC;
     //logging = default on (while in development, at least)
     intern->log_level = PHP_KAFKA_LOG_ON;
+    //init batch sizes to 50
+    intern->produce_batch_size = intern->consume_batch_size = 50;
 
     zend_object_std_init(&intern->std, class_type TSRMLS_CC);
     //add properties table
@@ -373,6 +377,30 @@ static int parse_options_array(zval *arr, kafka_connection **conn)
             char tmp[128];
             switch (idx)
             {
+                case PHP_KAFKA_PRODUCE_BATCH_SIZE:
+                    if (Z_TYPE_PP(entry) == IS_STRING)
+                    {//if numeric string is passed, attempt to convert it to int
+                        convert_to_long_ex(entry);
+                    }
+                    if (Z_TYPE_PP(entry) != IS_LONG)
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid argument for Kafka::PRODUCE_BATCH_SIZE, expected numeric value", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    connection->produce_batch_size = Z_LVAL_PP(entry);
+                    break;
+                case PHP_KAFKA_CONSUME_BATCH_SIZE:
+                    if (Z_TYPE_PP(entry) == IS_STRING)
+                    {
+                        convert_to_long_ex(entry);
+                    }
+                    if (Z_TYPE_PP(entry) != IS_LONG)
+                    {
+                        zend_throw_exception(kafka_exception, "Invalid argument for Kafka::CONSUME_BATCH_SIZE, expected numeric value", 0 TSRMLS_CC);
+                        return -1;
+                    }
+                    connection->consume_batch_size = Z_LVAL_PP(entry);
+                    break;
                 case PHP_KAFKA_RETRY_COUNT:
                     if (Z_TYPE_PP(entry) == IS_STRING && is_number(Z_STRVAL_PP(entry)))
                     {
@@ -1142,7 +1170,7 @@ PHP_METHOD(Kafka, produceBatch)
     char **msg_batch = NULL;
     int *msg_batch_len = NULL;
     long reporting = connection->delivery_confirm_mode,
-        batch_size = 50;
+        batch_size = connection->produce_batch_size;
     int topic_len,
         msg_len,
         current_idx = 0,
@@ -1391,7 +1419,7 @@ PHP_METHOD(Kafka, consumeBatch)
     char *offset;
     int offset_len, status = 0;
     long count = 0,
-        batch_size = 50;
+        batch_size = connection->consume_batch_size;
 
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ssl",
             &topic, &topic_len,

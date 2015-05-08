@@ -37,6 +37,8 @@
 #define PHP_KAFKA_QUEUE_BUFFER_SIZE 8
 #define PHP_KAFKA_COMPRESSION_MODE 16
 #define PHP_KAFKA_LOGLEVEL 32
+#define PHP_KAFKA_PRODUCE_BATCH_SIZE 64
+#define PHP_KAFKA_CONSUME_BATCH_SIZE 128
 #define PHP_KAFKA_CONFIRM_OFF 0
 #define PHP_KAFKA_CONFIRM_BASIC 1
 #define PHP_KAFKA_CONFIRM_EXTENDED 2
@@ -65,6 +67,8 @@ typedef struct _kafka_r {
     char                *retry_interval;
     int                 delivery_confirm_mode;
     char                *queue_buffer;
+    long                consume_batch_size;
+    long                produce_batch_size;
     long                consumer_partition;
     long                producer_partition;
     int                 log_level;
