@@ -1,5 +1,5 @@
 --TEST--
-Test constructor arguments (config array)
+Test constructor arguments (config array -> loglevel)
 --FILE--
 <?php
 try {

@@ -1,5 +1,5 @@
 --TEST--
-Test constructor arguments (config array)
+Test constructor arguments (config array -> batch size)
 --FILE--
 <?php
 try {

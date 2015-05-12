@@ -529,7 +529,7 @@ PHP_METHOD(Kafka, __construct)
 
     //force constructor to throw exceptions in case of an error
     zend_replace_error_handling(EH_THROW, kafka_exception, NULL TSRMLS_CC);
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|a",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|a!",
             &brokers, &brokers_len, &arr) == SUCCESS)
     {
         if (arr && parse_options_array(arr, &connection))
@@ -557,7 +557,7 @@ PHP_METHOD(Kafka, isConnected)
     long tmp_val = -1;
     rd_kafka_type_t type;
     GET_KAFKA_CONNECTION(k, obj);
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z", &mode) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z!", &mode) == FAILURE)
         return;
     if (mode)
     {
@@ -649,7 +649,7 @@ PHP_METHOD(Kafka, set_partition)
         *obj = getThis();
     long p_value;
     GET_KAFKA_CONNECTION(connection, obj);
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z", &partition, &mode) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z!", &partition, &mode) == FAILURE)
         return;
     if (Z_TYPE_P(partition) != IS_LONG || (mode && Z_TYPE_P(mode) != IS_LONG)) {
         zend_throw_exception(kafka_exception, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
@@ -789,7 +789,7 @@ PHP_METHOD(Kafka, setPartition)
         *obj = getThis();
     long p_value;
     GET_KAFKA_CONNECTION(connection, obj);
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z", &partition, &mode) == FAILURE)
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "z|z!", &partition, &mode) == FAILURE)
         return;
     if (Z_TYPE_P(partition) != IS_LONG || (mode && Z_TYPE_P(mode) != IS_LONG)) {
         zend_throw_exception(kafka_exception, "Partition and/or mode is expected to be an int", 0 TSRMLS_CC);
@@ -900,7 +900,7 @@ PHP_METHOD(Kafka, setBrokers)
     int brokers_len;
     GET_KAFKA_CONNECTION(connection, obj);
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|a",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|a!",
             &brokers, &brokers_len, &arr) == FAILURE) {
         return;
     }
@@ -1055,7 +1055,7 @@ PHP_METHOD(Kafka, disconnect)
         *mode = NULL;
     long type = -1;
     GET_KAFKA_CONNECTION(connection, obj);
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|z!",
             &mode) == FAILURE) {
         return;
     }
