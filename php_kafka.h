@@ -57,6 +57,8 @@ PHP_MINFO_FUNCTION(kafka);
 
 #define PHP_KAFKA_PARTITION_RANDOM RD_KAFKA_PARTITION_UA
 
+//internal representation of Kafka instance
+//this will! change, though, once the focus shifts towards KafkaTopic
 typedef struct _kafka_r {
     zend_object         std;
     rd_kafka_t          *consumer;
@@ -75,9 +77,33 @@ typedef struct _kafka_r {
     rd_kafka_type_t     rk_type;
 } kafka_connection;
 
+//internal representation of KafkaTopic instance
+typedef struct _kafka_topic_r {
+    zend_object             std;
+    char                    *topic_name;
+    rd_kafka_t              *conn;
+    rd_kafka_type_t         rk_type;
+    rd_kafka_topic_t        *topic;
+    rd_kafka_topic_conf_t   *config;
+    rd_kafka_metadata_t     *meta;
+} kafka_topic;
+
+#define GET_KAFKA_CONNECTION(varname, thisObj) \
+    kafka_connection *varname = (kafka_connection *) zend_object_store_get_object( \
+        thisObj TSRMLS_CC \
+    )
+
+#define GET_KAFKA_TOPIC(varname, thisObj) \
+    kafka_topic *varname = (kafka_topic *) zend_object_store_get_object( \
+        thisObj TSRMLS_CC \
+    )
+
 //attach kafka connection to module
 zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC);
+//attach topic
+zend_object_value create_kafka_topic(zend_class_entry *class_type TSRMLS_DC);
 
 void free_kafka_connection(void *object TSRMLS_DC);
+void free_kafka_topic(void *object TSRMLS_DC);
 
 #endif

@@ -898,6 +898,7 @@ int kafka_partition_offsets(rd_kafka_t *r, long **partitions, const char *topic)
                 continue;
             }
         }
+        //rd_kafka_poll(r, 0);
         //eiter eop reached 0, or the read errors >= nr of partitions
         //either way, we've consumed a message from each partition, and therefore, we're done
         while(cb_params.eop && cb_params.error_count < meta->topics->partition_cnt)
@@ -1317,5 +1318,61 @@ int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, 
     /* Stop consuming */
     rd_kafka_consume_stop(rkt, partition);
     rd_kafka_topic_destroy(rkt);
+    return 0;
+}
+
+void destroy_kafka_topic_handle(rd_kafka_t *r, rd_kafka_topic_t *rt, rd_kafka_topic_conf_t *rtc, rd_kafka_metadata_t* rm, int wait)
+{
+    int i, p_cnt = 0;
+    //-1 signals immediate termination
+    if (r)
+        rd_kafka_poll(r, 1);
+    if (wait != -1) {
+        if (rm) {
+            p_cnt = rm->topics->partition_cnt;
+            for (i=0;i<p_cnt;++i)
+                rd_kafka_consume_stop(rt, rm->topics[0].partitions[i].id);
+            rd_kafka_metadata_destroy(rm);
+        }
+        while (rd_kafka_outq_len(r) > 0)
+            rd_kafka_poll(r, 5);
+    }
+    //this gives segfaults for some reason?
+    //rd_kafka_topic_conf_destroy(rtc);
+    rd_kafka_topic_destroy(rt);
+    rd_kafka_destroy(r);
+    if (wait != -1) {
+        rd_kafka_wait_destroyed(10);
+    } else {
+        //assume all went well...
+        rd_kafka_wait_destroyed(1);
+    }
+}
+
+int init_kafka_topic_handle(rd_kafka_t *r, const char *topic_name, rd_kafka_type_t type, rd_kafka_topic_t **topic, rd_kafka_topic_conf_t **conf)
+{
+    if (r == NULL)
+    {
+        return -1;
+    }
+    rd_kafka_topic_t *rkt = NULL;
+    rd_kafka_topic_conf_t *topic_conf = rd_kafka_topic_conf_new();
+    char errstr[512];
+
+    if (type == RD_KAFKA_CONSUMER)
+    {
+        //todo -> check this result, it affects callback handler
+        //if (rd_kafka_topic_conf_set(conf, "auto.commit.enable", "false", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+        rd_kafka_topic_conf_set(topic_conf, "auto.commit.enable", "false", errstr, sizeof(errstr));
+    }
+    /* Create topic */
+    rkt = rd_kafka_topic_new(r, topic_name, topic_conf);
+    if (!rkt)
+    {
+        rd_kafka_topic_conf_destroy(topic_conf);
+        return -1;
+    }
+    *topic = rkt;
+    *conf = topic_conf;
     return 0;
 }

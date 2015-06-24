@@ -46,12 +46,13 @@ ZEND_GET_MODULE(kafka)
 #endif
 #endif
 
-#define GET_KAFKA_CONNECTION(varname, thisObj) \
-    kafka_connection *varname = (kafka_connection *) zend_object_store_get_object( \
-        thisObj TSRMLS_CC \
-    )
+/* decalre the class entries */
+zend_class_entry *kafka_ce;
+zend_class_entry *kafka_topic_ce;
+zend_class_entry *kafka_exception;
 
-/* {{{ arginfo */
+
+/* {{{ arginfo Kafka */
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka__constr, 0, 0, 1)
     ZEND_ARG_INFO(0, brokers)
     ZEND_ARG_INFO(0, options)
@@ -116,7 +117,8 @@ ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_disconnect, 0, 0, 0)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
-/* }}} end arginfo */
+/* }}} end arginfo Kafka*/
+/* {{{ Kafka methods declaration */
 static PHP_METHOD(Kafka, __construct);
 static PHP_METHOD(Kafka, __destruct);
 static PHP_METHOD(Kafka, setCompression);
@@ -137,12 +139,27 @@ static PHP_METHOD(Kafka, produce);
 static PHP_METHOD(Kafka, consume);
 static PHP_METHOD(Kafka, consumeBatch);
 
-/* decalre the class entries */
-zend_class_entry *kafka_ce;
-zend_class_entry *kafka_exception;
+/* }}} end Kafka methods */
 
-/* the method table */
-/* each method can have its own parameters and visibility */
+/* {{{ arginfo KafkaTopic */
+ZEND_BEGIN_ARG_INFO(arginf_kafka_topic__constr, 0)
+    ZEND_ARG_INFO(0, connection)
+    ZEND_ARG_INFO(0, topicName)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+/* }}} end arginfo KafkaTopic */
+
+/* {{{ KafkaTopic method declaration */
+static PHP_METHOD(KafkaTopic, __construct);
+/* }}} end KafkaTopic methods */
+
+/* {{{ Method tables */
+//KafkaTopic
+static zend_function_entry kafka_topic_function[] = {
+    PHP_ME(KafkaTopic, __construct, arginf_kafka_topic__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
+};
+
+//Kafka
 static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, __construct, arginf_kafka__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, __destruct, arginf_kafka_void, ZEND_ACC_DTOR | ZEND_ACC_PUBLIC)
@@ -182,15 +199,23 @@ zend_module_entry kafka_module_entry = {
 PHP_MINIT_FUNCTION(kafka)
 {
     zend_class_entry ce,
-            ce_ex;
+            ce_ex,
+            ce_t;
+    //register Kafka class
     INIT_CLASS_ENTRY(ce, "Kafka", kafka_functions);
     kafka_ce = zend_register_internal_class(&ce TSRMLS_CC);
+    //register KafkaException class, extends BASE_EXCEPTION
     INIT_CLASS_ENTRY(ce_ex, "KafkaException", NULL);
     kafka_exception = zend_register_internal_class_ex(
         &ce_ex,
         BASE_EXCEPTION,
         NULL TSRMLS_CC
     );
+    //register KafkaTopic class
+    /* commented out until issues fixed
+    INIT_CLASS_ENTRY(ce_t, "KafkaTopic", kafka_topic_function);
+    kafka_topic_ce = zend_register_internal_class(&ce_t TSRMLS_CC);*/
+
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
@@ -264,6 +289,35 @@ PHP_MINFO_FUNCTION(kafka)
     //not just yet:
     //DISPLAY_INI_ENTRIES();
 }
+zend_object_value create_kafka_topic(zend_class_entry *class_type TSRMLS_DC)
+{
+    zend_object_value retval;
+    kafka_topic *intern;
+    zval *tmp;
+    intern = emalloc(sizeof *intern);
+    memset(intern, 0, sizeof *intern);
+#if PHP_VERSION_ID < 50399
+    zend_hash_copy(
+        intern->std.properties, &class_type->default_properties,
+        (copy_ctor_func_t)zval_add_ref,
+        (void *)&tmp,
+        sizeof tmp
+    );
+#else
+    object_properties_init(&intern->std, class_type);
+#endif
+
+    // create a destructor for this struct
+    retval.handle = zend_objects_store_put(
+        intern,
+        (zend_objects_store_dtor_t) zend_objects_destroy_object,
+        free_kafka_topic,
+        NULL TSRMLS_CC
+    );
+    retval.handlers = zend_get_std_object_handlers();
+
+    return retval;
+}
 
 zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC)
 {
@@ -308,6 +362,25 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
     retval.handlers = zend_get_std_object_handlers();
 
     return retval;
+}
+
+//dtor handle for KafkaTopic instances... needs some work, though...
+void free_kafka_topic(void *obj TSRMLS_DC)
+{
+    kafka_topic *topic = (kafka_topic *) obj;
+    if (topic->topic_name) {
+        efree(topic->topic_name);
+    }
+    //kill the handle, quite brutally
+    destroy_kafka_topic_handle(
+        topic->conn,
+        topic->topic,
+        topic->config,
+        topic->meta,
+        -1
+    );
+
+    efree(topic);
 }
 
 //clean current connections
@@ -1505,3 +1578,50 @@ PHP_METHOD(Kafka, consumeBatch)
     }
 }
 /* }}} end proto Kafka::consumeBatch */
+
+
+/* {{{ proto array KafkaTopic::__construct(Kafka $connection, int $mode )
+ * Consume in batches (should be more performant when consuming large number of messages
+ */
+PHP_METHOD(KafkaTopic, __construct)
+{
+    zval *object = getThis(),
+         *kafka;
+    char *topic_name;
+    int topic_name_len;
+    long mode = 0;//PHP_KAFKA_MODE_CONSUMER default?
+    kafka_connection *connection = NULL;
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(object TSRMLS_CC);
+    //
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "Osl", &kafka, kafka_ce, &topic_name, &topic_name_len, &mode) != SUCCESS)
+        return;//fatal
+    connection = (kafka_connection *) zend_object_store_get_object(kafka TSRMLS_CC);
+    if (mode != PHP_KAFKA_MODE_CONSUMER && mode != PHP_KAFKA_MODE_PRODUCER) {
+        zend_throw_exception(kafka_exception, "Invalid mode, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    if (topic_name_len == 0) {
+        zend_throw_exception(kafka_exception, "No topic name given", 0 TSRMLS_CC);
+        return;
+    }
+    //move connection to this instance
+    if (mode == PHP_KAFKA_MODE_CONSUMER) {
+        topic->conn = connection->consumer;
+        connection->consumer = NULL;
+        topic->rk_type =RD_KAFKA_CONSUMER;
+    } else {
+        topic->conn = connection->producer;
+        connection->producer = NULL;
+        topic->rk_type =RD_KAFKA_PRODUCER;
+    }
+    topic->topic_name = estrdup(topic_name);
+    if (0 != init_kafka_topic_handle(topic->conn, topic_name, topic->rk_type, &topic->topic, &topic->config))
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "Failed to create topic handle: make sure the connection is valid, and the topic exists",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+}
