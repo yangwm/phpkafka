@@ -167,6 +167,11 @@ rd_kafka_t *kafka_get_connection(kafka_connection_params params, const char *bro
     rd_kafka_conf_t *conf = rd_kafka_conf_new();
     //set error callback
     rd_kafka_conf_set_error_cb(conf, kafka_err_cb);
+    //PHP is stateless, broker should store offsets
+    rd_kafka_conf_set(
+        conf, "offset.store.method","broker", errstr, sizeof errstr
+    );
+
     if (params.type == RD_KAFKA_CONSUMER)
     {
         if (params.queue_buffer)
