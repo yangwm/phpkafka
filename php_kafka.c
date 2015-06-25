@@ -117,6 +117,11 @@ ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_disconnect, 0, 0, 0)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO(arginf_kafka_get_topic, 0)
+    ZEND_ARG_INFO(0, topicName)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+
 /* }}} end arginfo Kafka*/
 /* {{{ Kafka methods declaration */
 static PHP_METHOD(Kafka, __construct);
@@ -138,7 +143,7 @@ static PHP_METHOD(Kafka, produceBatch);
 static PHP_METHOD(Kafka, produce);
 static PHP_METHOD(Kafka, consume);
 static PHP_METHOD(Kafka, consumeBatch);
-
+static PHP_METHOD(Kafka, getTopic);
 /* }}} end Kafka methods */
 
 /* {{{ arginfo KafkaTopic */
@@ -181,6 +186,7 @@ static zend_function_entry kafka_functions[] = {
     PHP_ME(Kafka, produceBatch, arginf_kafka_produce_batch, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, consume, arginf_kafka_consume, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, consumeBatch, arginf_kafka_consume_batch, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getTopic, arginf_kafka_get_topic, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL} /* Marks the end of function entries */
 };
 
@@ -1583,6 +1589,75 @@ PHP_METHOD(Kafka, consumeBatch)
 }
 /* }}} end proto Kafka::consumeBatch */
 
+/* {{{ proto KafkaTopic Kafka::getTopic( string $topicName, int $mode)
+ * Return instance of KafkaTopic to use for producing or consuming
+ */
+static PHP_METHOD(Kafka, getTopic)
+{
+    zval *obj = getThis();
+    GET_KAFKA_CONNECTION(connection, obj);
+    char *topic_name;
+    int topic_name_len;
+    long mode = 0;//PHP_KAFKA_MODE_CONSUMER default?
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &topic_name, &topic_name_len, &mode) != SUCCESS)
+        return;//fatal
+    //topic_name argument validation is handled by KafkaTopic constructor
+    if (mode != PHP_KAFKA_MODE_CONSUMER && mode != PHP_KAFKA_MODE_PRODUCER)
+    {
+        zend_throw_exception(kafka_exception, "Invalid mode, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    //make zvals to pass to constructor
+    zval z_mode,
+        z_topic_name;
+    if (mode == PHP_KAFKA_MODE_CONSUMER)
+    {
+        if (connection->consumer == NULL)
+        {
+            kafka_connection_params config;
+            config.type = RD_KAFKA_CONSUMER;
+            config.log_level = connection->log_level;
+            config.queue_buffer = connection->queue_buffer;
+            config.compression = NULL;
+            connection->consumer = kafka_get_connection(config, connection->brokers);
+            if (connection->consumer == NULL)
+            {
+                zend_throw_exception(kafka_exception, "Failed to establish consumer connection to kafka", 0 TSRMLS_CC);
+                return;
+            }
+        }
+    }
+    else if (mode == PHP_KAFKA_MODE_PRODUCER)
+    {//assume
+        if (connection->producer == NULL)
+        {
+            kafka_connection_params config;
+            config.type = RD_KAFKA_PRODUCER;
+            config.log_level = connection->log_level;
+            config.reporting = connection->delivery_confirm_mode;
+            config.retry_count = connection->retry_count;
+            config.compression = connection->compression;
+            config.retry_interval = connection->retry_interval;
+            connection->producer = kafka_get_connection(config, connection->brokers);
+            if (connection->producer == NULL)
+            {
+                zend_throw_exception(kafka_exception, "Failed to establish producer connection to kafka", 0 TSRMLS_CC);
+                return;
+            }
+        }
+    }
+    //initialize the arguments
+    ZVAL_LONG(&z_mode, mode);
+    //pass as-is, the value of topic_name will be copied in the constructor
+    ZVAL_STRINGL(&z_topic_name, topic_name, topic_name_len, 0);
+    //init return value
+    object_init_ex(return_value, kafka_topic_ce);
+    //call the constructor, pass Kafka instance, the topic name and the mode value
+    //technically, though, there's no need to do this
+    //we initialized KafkaTopic here, so we can set the connection, and topic name
+    CALL_METHOD3(KafkaTopic, __construct, return_value, return_value, obj, &z_topic_name, &z_mode);
+}
+/* }}} end proto Kafka::getTopic */
 
 /* {{{ proto array KafkaTopic::__construct(Kafka $connection, int $mode )
  * Consume in batches (should be more performant when consuming large number of messages

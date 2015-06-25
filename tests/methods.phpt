@@ -6,7 +6,7 @@ $kafka = new Kafka('localhost:9092');
 var_dump(get_class_methods($kafka));
 ?>
 --EXPECT--
-array(19) {
+array(20) {
   [0]=>
   string(11) "__construct"
   [1]=>
@@ -45,5 +45,6 @@ array(19) {
   string(7) "consume"
   [18]=>
   string(12) "consumeBatch"
+  [19]=>
+  string(8) "getTopic"
 }
-
