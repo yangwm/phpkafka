@@ -157,6 +157,7 @@ static PHP_METHOD(KafkaTopic, __construct);
 //KafkaTopic
 static zend_function_entry kafka_topic_function[] = {
     PHP_ME(KafkaTopic, __construct, arginf_kafka_topic__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
+    {NULL,NULL,NULL} /* Marks the end of function entries */
 };
 
 //Kafka
@@ -212,9 +213,11 @@ PHP_MINIT_FUNCTION(kafka)
         NULL TSRMLS_CC
     );
     //register KafkaTopic class
-    /* commented out until issues fixed
     INIT_CLASS_ENTRY(ce_t, "KafkaTopic", kafka_topic_function);
-    kafka_topic_ce = zend_register_internal_class(&ce_t TSRMLS_CC);*/
+    kafka_topic_ce = zend_register_internal_class(&ce_t TSRMLS_CC);
+    //add create_object handler & make final
+    kafka_topic_ce->create_object = create_kafka_topic;
+    kafka_topic_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
 
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
@@ -296,6 +299,7 @@ zend_object_value create_kafka_topic(zend_class_entry *class_type TSRMLS_DC)
     zval *tmp;
     intern = emalloc(sizeof *intern);
     memset(intern, 0, sizeof *intern);
+    zend_object_std_init(&intern->std, class_type TSRMLS_CC);
 #if PHP_VERSION_ID < 50399
     zend_hash_copy(
         intern->std.properties, &class_type->default_properties,
