@@ -396,6 +396,18 @@ final class Kafka
         return [];
     }
 
+    /**
+     * Get topic instance for $topicName in $mode
+     * @param string $topicName
+     * @param int $mode
+     * @return KafkaTopic
+     * @throws KafkaException
+     */
+    public function getTopic($topicName, $mode)
+    {
+        return new KafkaTopic($this, $topicName, $mode);
+    }
+
     public function __destruct()
     {
         $this->connected = false;

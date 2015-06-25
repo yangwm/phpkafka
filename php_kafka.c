@@ -152,16 +152,22 @@ ZEND_BEGIN_ARG_INFO(arginf_kafka_topic__constr, 0)
     ZEND_ARG_INFO(0, topicName)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_topic_void, 0)
+ZEND_END_ARG_INFO()
+
 /* }}} end arginfo KafkaTopic */
 
 /* {{{ KafkaTopic method declaration */
 static PHP_METHOD(KafkaTopic, __construct);
+static PHP_METHOD(KafkaTopic, getName);
 /* }}} end KafkaTopic methods */
 
 /* {{{ Method tables */
 //KafkaTopic
 static zend_function_entry kafka_topic_function[] = {
     PHP_ME(KafkaTopic, __construct, arginf_kafka_topic__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaTopic, getName, arginf_kafka_topic_void, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL} /* Marks the end of function entries */
 };
 
@@ -381,14 +387,17 @@ void free_kafka_topic(void *obj TSRMLS_DC)
     if (topic->topic_name) {
         efree(topic->topic_name);
     }
-    //kill the handle, quite brutally
-    destroy_kafka_topic_handle(
-        topic->conn,
-        topic->topic,
-        topic->config,
-        topic->meta,
-        -1
-    );
+    if (topic->conn != NULL)
+    {
+        //kill the handle, quite brutally
+        destroy_kafka_topic_handle(
+            topic->conn,
+            topic->topic,
+            topic->config,
+            topic->meta,
+            -1
+        );
+    }
 
     efree(topic);
 }
@@ -1592,7 +1601,7 @@ PHP_METHOD(Kafka, consumeBatch)
 /* {{{ proto KafkaTopic Kafka::getTopic( string $topicName, int $mode)
  * Return instance of KafkaTopic to use for producing or consuming
  */
-static PHP_METHOD(Kafka, getTopic)
+PHP_METHOD(Kafka, getTopic)
 {
     zval *obj = getThis();
     GET_KAFKA_CONNECTION(connection, obj);
@@ -1607,9 +1616,6 @@ static PHP_METHOD(Kafka, getTopic)
         zend_throw_exception(kafka_exception, "Invalid mode, use Kafka::MODE_* constants", 0 TSRMLS_CC);
         return;
     }
-    //make zvals to pass to constructor
-    zval z_mode,
-        z_topic_name;
     if (mode == PHP_KAFKA_MODE_CONSUMER)
     {
         if (connection->consumer == NULL)
@@ -1627,7 +1633,7 @@ static PHP_METHOD(Kafka, getTopic)
             }
         }
     }
-    else if (mode == PHP_KAFKA_MODE_PRODUCER)
+    else // if (mode == PHP_KAFKA_MODE_PRODUCER)
     {//assume
         if (connection->producer == NULL)
         {
@@ -1646,16 +1652,37 @@ static PHP_METHOD(Kafka, getTopic)
             }
         }
     }
-    //initialize the arguments
-    ZVAL_LONG(&z_mode, mode);
-    //pass as-is, the value of topic_name will be copied in the constructor
-    ZVAL_STRINGL(&z_topic_name, topic_name, topic_name_len, 0);
-    //init return value
-    object_init_ex(return_value, kafka_topic_ce);
     //call the constructor, pass Kafka instance, the topic name and the mode value
     //technically, though, there's no need to do this
     //we initialized KafkaTopic here, so we can set the connection, and topic name
-    CALL_METHOD3(KafkaTopic, __construct, return_value, return_value, obj, &z_topic_name, &z_mode);
+    //changed to initializing everything here.
+    //CALL_METHOD3(KafkaTopic, __construct, return_value, return_value, obj, &z_topic_name, &z_mode);
+
+    object_init_ex(return_value, kafka_topic_ce);
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(return_value TSRMLS_CC);
+    if (mode == PHP_KAFKA_MODE_CONSUMER)
+    {
+        topic->conn = connection->consumer;
+        connection->consumer = NULL;
+        topic->rk_type =RD_KAFKA_CONSUMER;
+    }
+    else
+    {
+        topic->conn = connection->producer;
+        connection->producer = NULL;
+        topic->rk_type =RD_KAFKA_PRODUCER;
+    }
+    topic->topic_name = estrdup(topic_name);
+    if (0 != init_kafka_topic_handle(topic->conn, topic_name, topic->rk_type, &topic->topic, &topic->config))
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "Failed to create topic handle: make sure the connection is valid, and the topic exists",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+
 }
 /* }}} end proto Kafka::getTopic */
 
@@ -1685,10 +1712,28 @@ PHP_METHOD(KafkaTopic, __construct)
     }
     //move connection to this instance
     if (mode == PHP_KAFKA_MODE_CONSUMER) {
+        if (connection->consumer == NULL)
+        {
+            zend_throw_exception(
+                kafka_exception,
+                "Kafka instance has no consumer connection ready",
+                0 TSRMLS_CC
+            );
+            return;
+        }
         topic->conn = connection->consumer;
         connection->consumer = NULL;
         topic->rk_type =RD_KAFKA_CONSUMER;
     } else {
+        if (connection->producer == NULL)
+        {
+            zend_throw_exception(
+                kafka_exception,
+                "Kafka instance has no producer connection ready",
+                0 TSRMLS_CC
+            );
+            return;
+        }
         topic->conn = connection->producer;
         connection->producer = NULL;
         topic->rk_type =RD_KAFKA_PRODUCER;
@@ -1704,3 +1749,14 @@ PHP_METHOD(KafkaTopic, __construct)
         return;
     }
 }
+
+/* {{{ proto string KafkaTopic::getName( void )
+ * Return current topic name
+ */
+PHP_METHOD(KafkaTopic, getName)
+{
+    zval *obj = getThis();
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(obj TSRMLS_CC);
+    RETURN_STRING(topic->topic_name, 1);
+}
+/* }}} end proto KafkaTopic::getName */
