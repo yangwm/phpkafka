@@ -507,7 +507,8 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
             messages[i].payload = msg[i];
             messages[i].len = msg_len[i];
         }
-        i = rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, messages, msg_cnt, NULL, 0, opaque);
+        i = rd_kafka_produce_batch(rkt, partition, RD_KAFKA_MSG_F_COPY, messages, msg_cnt);
+        //i = rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, messages, msg_cnt, NULL, 0, opaque);
         if (i < msg_cnt)
         {
             if (log_level)
