@@ -33,6 +33,8 @@ typedef struct connection_params_s {
     char *retry_interval;
 } kafka_connection_params;
 
+typedef struct rd_kafka_metadata rd_kafka_metadata_t;
+
 void kafka_setup(char *brokers);
 void kafka_set_log_level(int ll);
 void kafka_set_partition(int partition);
@@ -49,5 +51,6 @@ void kafka_get_topics(rd_kafka_t *r,zval *return_value);
 void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, const char *offset, int item_count);
 void kafka_destroy(rd_kafka_t *r, int timeout);
 int init_kafka_topic_handle(rd_kafka_t *r, const char *topic_name, rd_kafka_type_t type, rd_kafka_topic_t **topic, rd_kafka_topic_conf_t **conf);
-void destroy_kafka_topic_handle(rd_kafka_t *r, rd_kafka_topic_t *rt, rd_kafka_topic_conf_t *rtc, rd_kafka_metadata_t* rm, int wait);
+void destroy_kafka_topic_handle(rd_kafka_t *r, rd_kafka_topic_t *rt, rd_kafka_topic_conf_t *rtc, const rd_kafka_metadata_t* rm, int wait);
+const rd_kafka_metadata_t *get_topic_meta(rd_kafka_t *r, rd_kafka_topic_t *rt);
 #endif

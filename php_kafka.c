@@ -161,6 +161,7 @@ ZEND_END_ARG_INFO()
 /* {{{ KafkaTopic method declaration */
 static PHP_METHOD(KafkaTopic, __construct);
 static PHP_METHOD(KafkaTopic, getName);
+static PHP_METHOD(KafkaTopic, getPartitionCount);
 /* }}} end KafkaTopic methods */
 
 /* {{{ Method tables */
@@ -168,6 +169,7 @@ static PHP_METHOD(KafkaTopic, getName);
 static zend_function_entry kafka_topic_function[] = {
     PHP_ME(KafkaTopic, __construct, arginf_kafka_topic__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
     PHP_ME(KafkaTopic, getName, arginf_kafka_topic_void, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaTopic, getPartitionCount, arginf_kafka_topic_void, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL} /* Marks the end of function entries */
 };
 
@@ -1760,3 +1762,25 @@ PHP_METHOD(KafkaTopic, getName)
     RETURN_STRING(topic->topic_name, 1);
 }
 /* }}} end proto KafkaTopic::getName */
+
+/* {{{ proto int KafkaTopic::getTopicCount( void )
+ * Return the current topic's partition count
+ */
+PHP_METHOD(KafkaTopic, getPartitionCount)
+{
+    zval *obj = getThis();
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (topic->meta == NULL)
+    {
+        topic->meta = get_topic_meta(topic->conn, topic->topic);
+        if (topic->meta == NULL)
+        {
+            zend_throw_exception(
+                kafka_exception,
+                "Failed to fetch metadata for topic",
+                0 TSRMLS_CC
+            );
+        }
+    }
+    RETURN_LONG(topic->meta->topics->partition_cnt);
+}

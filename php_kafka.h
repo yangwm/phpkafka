@@ -79,13 +79,13 @@ typedef struct _kafka_r {
 
 //internal representation of KafkaTopic instance
 typedef struct _kafka_topic_r {
-    zend_object             std;
-    char                    *topic_name;
-    rd_kafka_t              *conn;
-    rd_kafka_type_t         rk_type;
-    rd_kafka_topic_t        *topic;
-    rd_kafka_topic_conf_t   *config;
-    rd_kafka_metadata_t     *meta;
+    zend_object                 std;
+    char                        *topic_name;
+    rd_kafka_t                  *conn;
+    rd_kafka_type_t             rk_type;
+    rd_kafka_topic_t            *topic;
+    rd_kafka_topic_conf_t       *config;
+    const rd_kafka_metadata_t   *meta;
 } kafka_topic;
 
 #define GET_KAFKA_CONNECTION(varname, thisObj) \

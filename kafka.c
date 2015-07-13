@@ -835,6 +835,17 @@ int kafka_partition_count(rd_kafka_t *r, const char *topic)
     return i;
 }
 
+const rd_kafka_metadata_t *get_topic_meta(rd_kafka_t *r, rd_kafka_topic_t *rt)
+{
+    const struct rd_kafka_metadata *meta = NULL;
+    if (RD_KAFKA_RESP_ERR_NO_ERROR != rd_kafka_metadata(r, 0, rt, &meta, 200))
+    {
+        rd_kafka_metadata_destroy(meta);
+        meta = NULL;
+    }
+    return meta;
+}
+
 //get the available partitions for a given topic
 void kafka_get_partitions(rd_kafka_t *r, zval *return_value, char *topic)
 {
@@ -1333,7 +1344,7 @@ int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, 
     return 0;
 }
 
-void destroy_kafka_topic_handle(rd_kafka_t *r, rd_kafka_topic_t *rt, rd_kafka_topic_conf_t *rtc, rd_kafka_metadata_t* rm, int wait)
+void destroy_kafka_topic_handle(rd_kafka_t *r, rd_kafka_topic_t *rt, rd_kafka_topic_conf_t *rtc, const rd_kafka_metadata_t* rm, int wait)
 {
     int i, p_cnt = 0;
     //-1 signals immediate termination
