@@ -156,12 +156,36 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO(arginf_kafka_topic_void, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO(arginf_kafka_topic_produce, 0)
+    ZEND_ARG_INFO(0, message)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_topic_produce_batch, 0, 0, 1)
+    ZEND_ARG_INFO(0, messages)
+    ZEND_ARG_INFO(0, batchSize)
+    ZEND_ARG_INFO(0, blocking)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_topic_consume, 0, 0, 0)
+    ZEND_ARG_INFO(0, messageCount)
+    ZEND_ARG_INFO(0, offset)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_topic_consume_batch, 0)
+    ZEND_ARG_INFO(0, offset)
+    ZEND_ARG_INFO(0, batchSize)
+ZEND_END_ARG_INFO()
+
 /* }}} end arginfo KafkaTopic */
 
 /* {{{ KafkaTopic method declaration */
 static PHP_METHOD(KafkaTopic, __construct);
 static PHP_METHOD(KafkaTopic, getName);
 static PHP_METHOD(KafkaTopic, getPartitionCount);
+static PHP_METHOD(KafkaTopic, produce);
+static PHP_METHOD(KafkaTopic, produceBatch);
+static PHP_METHOD(KafkaTopic, consume);
+static PHP_METHOD(KafkaTopic, consumeBatch);
 /* }}} end KafkaTopic methods */
 
 /* {{{ Method tables */
@@ -170,6 +194,10 @@ static zend_function_entry kafka_topic_function[] = {
     PHP_ME(KafkaTopic, __construct, arginf_kafka_topic__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
     PHP_ME(KafkaTopic, getName, arginf_kafka_topic_void, ZEND_ACC_PUBLIC)
     PHP_ME(KafkaTopic, getPartitionCount, arginf_kafka_topic_void, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaTopic, produce, arginf_kafka_topic_produce, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaTopic, produceBatch, arginf_kafka_topic_produce_batch, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaTopic, consume, arginf_kafka_topic_consume, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaTopic, consumeBatch, arginf_kafka_topic_consume_batch, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL} /* Marks the end of function entries */
 };
 
@@ -239,6 +267,7 @@ PHP_MINIT_FUNCTION(kafka)
     //offset constants (consume)
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_BEGIN, STRING);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_END, STRING);
+    REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_STORED, STRING);
     //compression mode constants
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_NONE, STRING);
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, COMPRESSION_GZIP, STRING);
@@ -1319,10 +1348,9 @@ PHP_METHOD(Kafka, produceBatch)
             efree(msg_batch_len);
         if (msg_batch)
             efree(msg_batch);
-        zend_throw_exception(
-            kafka_exception,
-            "Failed to allocate batch memory",
-            0 TSRMLS_CC
+        zend_error(
+            E_ERROR,
+            "Failed to allocate batch memroy"
         );
         return;
     }
@@ -1783,4 +1811,207 @@ PHP_METHOD(KafkaTopic, getPartitionCount)
         }
     }
     RETURN_LONG(topic->meta->topics->partition_cnt);
+}
+/* }}} end proto KafkaTopic::getTopicCount */
+
+/* {{{ proto KafkaTopic KafkaTopic::produce( string $message )
+ * Produce a single message (real-time/blocking)
+ */
+PHP_METHOD(KafkaTopic, produce)
+{
+    zval *obj = getThis();
+    char *message = NULL;
+    int status, message_len = 0;
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (topic->rk_type != RD_KAFKA_PRODUCER)
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "produce-calls require a topic in produce-mode",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &message, &message_len) != SUCCESS)
+        return;//fatal
+
+    //always reports => blocking call
+    status = kafka_topic_produce(topic->conn, topic->topic, message, message_len);
+
+    switch (status)
+    {
+        case -1:
+            zend_throw_exception(kafka_exception, "Failed to produce message", 0 TSRMLS_CC);
+            return;
+        case -2:
+            zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
+            return;
+    }
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto KafkaTopic::produce */
+
+/* {{{ proto KafkaTopic KafkaTopic::produceBatch( array $messages [, int $batchSize = 0 [, bool $blocking = false] ] )
+ * Produce messages in batches of $batchSize, if batch can't be allocated, there's a fallback to sequential (blocking) produce calls
+ * if $batchSize is 0 (default) the entire array will be produced as a single batch
+ */
+PHP_METHOD(KafkaTopic, produceBatch)
+{
+    zval *obj = getThis(),
+         *arr,
+         **entry;
+    char **msg_batch = NULL;
+    int *msg_batch_len = NULL;
+    int current_idx = 0,
+        batch_size = 0,
+        status = 0;
+    HashPosition pos;
+    zend_bool blocking = 0;
+    //make sure the connection is producer
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (topic->rk_type != RD_KAFKA_PRODUCER)
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "produce-calls require a topic in produce-mode",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "a|lb", &arr, &batch_size, &blocking) == FAILURE)
+        return;
+
+    //default batch size == the entire array
+    if (batch_size == 0)
+        batch_size = zend_hash_num_elements(Z_ARRVAL_P(arr));
+    if (batch_size < 1)
+    {//valid arguments only
+        zend_throw_exception(
+            kafka_exception,
+            "Kafka::produceBatch requires batchSize to be > 0",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+
+    //iterate array of messages, start producing them
+    //todo: change individual produce calls to a more performant
+    //produce queue...
+    zend_hash_internal_pointer_reset_ex(Z_ARRVAL_P(arr), &pos);
+    msg_batch_len = ecalloc(batch_size, sizeof *msg_batch_len);
+    msg_batch = emalloc(batch_size * sizeof *msg_batch);
+    if (msg_batch == NULL || msg_batch_len == NULL)
+    {//make sure we managed to allocate enough memory
+        //this is ugly, we should trigger fatal error here...
+        if (msg_batch_len)
+            efree(msg_batch_len);
+        if (msg_batch)
+            efree(msg_batch);
+        zend_error(
+            E_ERROR,
+            "Failed to allocate batch memroy"
+        );
+        return;
+    }
+    while (zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void **)&entry, &pos) == SUCCESS)
+    {
+        if (Z_TYPE_PP(entry) == IS_STRING)
+        {
+            msg_batch[current_idx] = Z_STRVAL_PP(entry);
+            msg_batch_len[current_idx] = Z_STRLEN_PP(entry);
+            ++current_idx;
+            if (current_idx == batch_size)
+            {
+                //default batch produce => sync...
+                status = kafka_topic_produce_batch(topic->conn, topic->topic, msg_batch, msg_batch_len, current_idx, blocking);
+                if (status)
+                {
+                    if (status < 0)
+                        zend_throw_exception(kafka_exception, "Failed to produce messages", 0 TSRMLS_CC);
+                    else if (status > 0)
+                    {
+                        char err_msg[200];
+                        snprintf(err_msg, 200, "Produced messages with %d errors", status);
+                        zend_throw_exception(kafka_exception, err_msg, 0 TSRMLS_CC);
+                    }
+                    efree(msg_batch_len);
+                    efree(msg_batch);
+                    return;
+                }
+                current_idx = 0;//reset batch counter
+            }
+        }
+        zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos);
+    }
+    if (current_idx)
+    {//we still have some messages to produce...
+        status = kafka_produce_batch(topic->conn, topic->topic_name, msg_batch, msg_batch_len, current_idx, 1);
+        if (status)
+        {
+            if (status < 0)
+                zend_throw_exception(kafka_exception, "Failed to produce messages", 0 TSRMLS_CC);
+            else if (status > 0)
+            {
+                char err_msg[200];
+                snprintf(err_msg, 200, "Produced messages with %d errors", status);
+                zend_throw_exception(kafka_exception, err_msg, 0 TSRMLS_CC);
+            }
+            efree(msg_batch_len);
+            efree(msg_batch);
+            return;
+        }
+    }
+    efree(msg_batch_len);
+    efree(msg_batch);
+    RETURN_ZVAL(obj, 1, 0);
+
+}
+/* }}} end proto KafkaTopic::produceBatch */
+
+/* {{{ proto KafkaTopic::consume( [ int $messageCount = 1 [, mixed $offset =  null]] )
+ * Consume X messages starting at $offset (default last), default $messageCount is 1
+ */
+PHP_METHOD(KafkaTopic, consume)
+{
+    zval *obj = getThis();
+    char *offset = NULL;
+    int status, offset_len = 0;
+    long item_count = 1;
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (topic->rk_type != RD_KAFKA_CONSUMER)
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "consume-calls require a topic in consumer-mode",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|ls", &item_count, &offset, &offset_len) != SUCCESS)
+        return;//fatal
+    if (topic->meta == NULL)
+    {
+        topic->meta = get_topic_meta(topic->conn, topic->topic);
+        if (topic->meta == NULL)
+        {
+            zend_throw_exception(
+                kafka_exception,
+                "Failed to fetch metadata for topic",
+                0 TSRMLS_CC
+            );
+        }
+    }
+    if (!offset_len)
+        offset = PHP_KAFKA_OFFSET_STORED;
+    array_init(return_value);
+    status = kafka_topic_consume(topic->conn, topic->topic, topic->meta, return_value, offset, item_count);
+    if (status)
+    {
+        zend_throw_exception(kafka_exception, "Failed to consume messages", status TSRMLS_CC);
+    }
+}
+
+PHP_METHOD(KafkaTopic, consumeBatch)
+{
+    zend_throw_exception(kafka_exception, "Not implemented yet", 0 TSRMLS_CC);
 }

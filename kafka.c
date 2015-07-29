@@ -449,6 +449,86 @@ int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_le
     return 0;
 }
 
+//topic-based batch producing
+int kafka_topic_produce_batch(rd_kafka_t *conn, rd_kafka_topic_t *topic, char **msg, int *msg_len, int msg_cnt, int report)
+{
+    if (!conn || !topic)
+    {//need both...
+        return -2;
+    }
+    struct produce_cb_params pcb = {msg_cnt, 0, 0, 0, 0, NULL};
+    void *opaque;
+    int partition = RD_KAFKA_PARTITION_UA;
+    int i,
+        err_cnt = 0;
+
+    if (report)
+        opaque = &pcb;
+    else
+        opaque = NULL;
+    rd_kafka_message_t *messages = calloc(sizeof *messages, msg_cnt);
+    if (messages == NULL)
+    {//fallback to individual produce calls
+        if (!opaque)
+        {//force blocking here...
+            opaque = &pcb;
+            report = 1;
+        }
+        for (i=0;i<msg_cnt;++i)
+        {
+            if (rd_kafka_produce(topic, partition, RD_KAFKA_MSG_F_COPY, msg[i], msg_len[i], NULL, 0, opaque) == -1)
+            {
+                if (log_level)
+                {
+                    openlog("phpkafka", 0, LOG_USER);
+                    syslog(LOG_INFO, "phpkafka - %% Failed to produce to topic %s "
+                        "partition %i: %s",
+                        rd_kafka_topic_name(topic), partition,
+                        rd_kafka_err2str(
+                        rd_kafka_errno2err(errno)));
+                }
+            }
+        }
+    }
+    else
+    {
+        for (i=0;i<msg_cnt;++i)
+        {
+            messages[i].payload = msg[i];
+            messages[i].len = msg_len[i];
+        }
+        if (opaque)
+        {//requested produce batch WITH reporting
+            i = rd_kafka_produce(topic, partition, RD_KAFKA_MSG_F_COPY, messages, msg_cnt, NULL, 0, opaque);
+        }
+        else
+        {//no reporting, just quickly produce batch
+            i = rd_kafka_produce_batch(topic, partition, RD_KAFKA_MSG_F_COPY, messages, msg_cnt);
+            err_cnt = msg_cnt - i;
+        }
+        if (i < msg_cnt)
+        {
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_WARNING, "Failed to queue full message batch, %d of %d were put in queue", i, msg_cnt);
+            }
+        }
+        free(messages);
+        messages = NULL;
+    }
+    /* Poll to handle delivery reports */
+    rd_kafka_poll(conn, 0);
+
+    /* Wait for messages to be delivered */
+    while (report && pcb.msg_count && rd_kafka_outq_len(conn) > 0)
+        rd_kafka_poll(conn, 10);
+
+    if (report)
+        err_cnt = pcb.err_count;
+    return err_cnt;
+}
+
 int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt, int report)
 {
     rd_kafka_topic_t *rkt;
@@ -539,6 +619,37 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
     if (report)
         err_cnt = pcb.err_count;
     return err_cnt;
+}
+//produce onto known/existing topic
+int kafka_topic_produce(rd_kafka_t* conn, rd_kafka_topic_t *topic, char* msg, int msg_len)
+{
+    if (!conn || !topic)
+    {//incomplete set of arguments...
+        return -2;
+    }
+    struct produce_cb_params pcb = {1, 0, 0, 0, 0, NULL};
+    void *opaque = &pcb;
+    if (rd_kafka_produce(topic, RD_KAFKA_PARTITION_UA, RD_KAFKA_MSG_F_COPY, msg, msg_len,NULL, 0,opaque) == -1) {
+       if (log_level)
+       {
+           openlog("phpkafka", 0, LOG_USER);
+           syslog(LOG_INFO, "phpkafka - %% Failed to produce to topic %s "
+               "partition %i: %s",
+               rd_kafka_topic_name(topic), RD_KAFKA_PARTITION_UA,
+               rd_kafka_err2str(
+               rd_kafka_errno2err(errno)));
+        }
+       return -1;
+    }
+
+    /* Poll to handle delivery reports */
+    rd_kafka_poll(conn, 0);
+
+    /* Wait for messages to be delivered */
+    while (pcb.msg_count && rd_kafka_outq_len(conn) > 0)
+      rd_kafka_poll(conn, 10);
+
+    return 0;
 }
 
 int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report)
@@ -1195,6 +1306,177 @@ void kafka_consume_all(rd_kafka_t *rk, zval *return_value, const char *topic, co
     }
     if (meta)
         rd_kafka_metadata_destroy(meta);
+}
+
+static
+void topic_consume_callback(rd_kafka_message_t *message, void *opaque)
+{
+    struct consume_cb_params *params = opaque;
+    zval *return_value = params->return_value;
+    //all partitions EOF
+    if (params->eop < 1)
+        return;
+    //nothing more to read...
+    if (params->read_count == 0)
+        return;
+    if (message->err)
+    {
+        //if auto-commit is disabled:
+        if (params->auto_commit == 0)
+            //store offset
+            rd_kafka_offset_store(
+                message->rkt,
+                message->partition,
+                message->offset == 0 ? 0 : message->offset -1
+            );
+        if (message->err == RD_KAFKA_RESP_ERR__PARTITION_EOF)
+        {
+            if (params->partition_ends[message->partition] == 0)
+            {
+                params->eop -= 1;
+                params->partition_ends[message->partition] = 1;
+            }
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_INFO,
+                    "phpkafka - %% Consumer reached end of %s [%"PRId32"] "
+                    "message queue at offset %"PRId64"\n",
+                    rd_kafka_topic_name(message->rkt),
+                    message->partition, message->offset);
+            }
+            return;
+        }
+        else
+        {//only count non EOP errors as real errors (error here -> exception)
+            params->error_count += 1;
+        }
+        //add_next_index_string(return_value, rd_kafka_message_errstr(message), 1);
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - %% Consume error for topic \"%s\" [%"PRId32"] "
+                "offset %"PRId64": %s\n",
+                rd_kafka_topic_name(message->rkt),
+                message->partition,
+                message->offset,
+                rd_kafka_message_errstr(message)
+            );
+        }
+        return;
+    }
+    //only count successful reads!
+    //-1 means read all from offset until end
+    if (params->read_count > 0)
+        params->read_count -= 1;
+    //add message to return value (perhaps add as array -> offset + msg?
+    if (message->len > 0) {
+        add_next_index_stringl(return_value, (char *) message->payload, message->len, 1);
+    } else {
+        add_next_index_string(return_value, "", 1);
+    }
+
+    //store offset if autocommit is disabled
+    if (params->auto_commit == 0)
+        rd_kafka_offset_store(
+            message->rkt,
+            message->partition,
+            message->offset
+        );
+}
+
+int kafka_topic_consume(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata *meta, zval *return_value, const char *offset, int item_count)
+{
+    int64_t start_offset = 0;
+    int32_t partition = 0;
+    struct consume_cb_params cb_params = {item_count, return_value, NULL, 0, 0, 0};
+    int read_counter = 0,
+        run = 1,
+        max = 0,
+        i;
+    //nothing to consume?
+    if (item_count == 0)
+        return 0;
+    if (strlen(offset) != 0)
+    {
+        if (!strcmp(offset, "end"))
+            start_offset = RD_KAFKA_OFFSET_END;
+        else if (!strcmp(offset, "beginning"))
+            start_offset = RD_KAFKA_OFFSET_BEGINNING;
+        else if (!strcmp(offset, "stored"))
+            start_offset = RD_KAFKA_OFFSET_STORED;
+        else
+        {
+            start_offset = strtoll(offset, NULL, 10);
+            if (start_offset < 1)
+                return -1;
+        }
+    }
+    //open partition buffers
+    for (i=0;i < meta->topics->partition_cnt;++i)
+    {
+        partition = meta->topics->partitions[i].id;
+        //get highest partition value
+        if (partition > max)
+            max = partition;
+        if (rd_kafka_consume_start(topic, partition, start_offset) == -1)
+        {
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_INFO, "phpkafka - %% Failed to start consuming: %s",
+                    rd_kafka_err2str(rd_kafka_errno2err(errno)));
+            }
+            while (i--)
+                rd_kafka_consume_stop(topic, meta->topics->partitions[i].id);
+            return -4;
+        }
+    }
+    ++max;
+    cb_params.partition_ends = calloc(max, sizeof *cb_params.partition_ends);
+    if (cb_params.partition_ends == NULL)
+    {
+        for (i=0;i < meta->topics->partition_cnt;++i)
+        {
+            rd_kafka_consume_stop(topic, meta->topics->partitions[i].id);
+        }
+        return -10;//big problem
+    }
+    //start consuming, rely on callback
+    for (i=0; i < meta->topics->partition_cnt; ++i)
+    {
+        if (cb_params.read_count == 0 || cb_params.error_count)
+            break;//stop if we've already done everything that needed doing
+        partition = meta->topics->partitions[i].id;
+        cb_params.eop += 1;
+        if (rd_kafka_consume_callback(topic, partition, 1000, topic_consume_callback, (void *) &cb_params) == -1)
+        {//error consuming from topic
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_INFO, "phpkafka - %% Failed to consume from %dth partition: %s",
+                    i,
+                    rd_kafka_err2str(rd_kafka_errno2err(errno))
+                );
+            }
+            for (i=0;i<meta->topics->partition_cnt; ++i)
+            {//stop consuming all topics
+                rd_kafka_consume_stop(topic, meta->topics->partitions[i].id);
+            }
+            return -3;
+        }
+        rd_kafka_poll(conn, 0);
+    }
+    //wait for consume to finish, either because of error, reached read_count or eop on all partitions
+    while (!cb_params.error_count && cb_params.read_count && cb_params.eop)
+        rd_kafka_poll(conn, 0);
+    //stop consuming
+    for (i=0;i<meta->topics->partition_cnt; ++i)
+    {//stop consuming all topics
+        rd_kafka_consume_stop(topic, meta->topics->partitions[i].id);
+    }
+    free(cb_params.partition_ends);
+    return cb_params.error_count;
 }
 
 int kafka_consume(rd_kafka_t *r, zval* return_value, char* topic, char* offset, int item_count, int partition)

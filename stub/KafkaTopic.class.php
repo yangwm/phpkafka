@@ -79,4 +79,53 @@ final class KafkaTopic
         $this->partitionCount = $this->meta['topics']['partition_count'];
         return $this->partitionCount;
     }
+
+    /**
+     * produce single message
+     * @return $this
+     * @throws \KafkaException
+     */
+    public function produce($message)
+    {
+        if ($this->mode != Kafka::MODE_PRODUCER)
+        {
+            throw new \KafkaException('produce-calls require a topic in producer-mode');
+        }
+        return $this;
+    }
+
+    /**
+     * Produce in batch. The batch size defaults to the size of the array
+     * Method can be made to return after all batches have been produced
+     * @param array $messages
+     * @param int $batchSize = 0
+     * @param bool $blocking = false
+     * @return $this
+     * @throws \KafkaException
+     */
+    public function produceBatch(array $messages, $batchSize = 0, $blocking = false)
+    {
+        if (!$batchSize)
+            $batchSize = count($messages);
+        return $this;
+    }
+
+    /**
+     * Consumes one or more messages (blocking)
+     * @param int $messageCount = 1
+     * @param mixed $offset = \Kafka::OFFSET_STORED
+     * @return array
+     * @throws \KafkaException
+     */
+    public function consume($messageCount = 1, $offset = \Kafka::OFFSET_STORED)
+    {
+        if ($this->mode != \Kafka::MODE_CONSUMER)
+            throw new \KafkaException('consume-calls require topic in consumer-mode');
+        return [];
+    }
+
+    public function consumeBatch()
+    {
+        throw new \KafkaException('Method not implemented yet');
+    }
 }

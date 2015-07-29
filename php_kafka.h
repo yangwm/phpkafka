@@ -23,6 +23,7 @@
 #define PHP_KAFKA_EXTNAME "kafka"
 #define PHP_KAFKA_OFFSET_BEGIN "beginning"
 #define PHP_KAFKA_OFFSET_END "end"
+#define PHP_KAFKA_OFFSET_STORED "stored"
 #define PHP_KAFKA_LOG_ON 1
 #define PHP_KAFKA_LOG_OFF 0
 #define PHP_KAFKA_MODE_CONSUMER 0

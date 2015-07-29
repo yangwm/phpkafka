@@ -335,11 +335,7 @@ final class Kafka
         } else {
             $start = $offset;
         }
-        if (!is_numeric($count)) {
-            //depending on amount of messages in topic
-            $count = 100;
-        }
-        return array_fill_keys(range($start, $count), 'messages');
+        return array_fill_keys(range($start, $batchSize), 'messages');
     }
 
     /**
