@@ -124,8 +124,22 @@ final class KafkaTopic
         return [];
     }
 
-    public function consumeBatch()
+    /**
+     * Not ready to use yet, the return value is referenced internally, but no ref is returned
+     * We're going to turn this into an object
+     * @param int $batchSize = -1
+     * @param mixed $offset = \Kafka::OFFSET_STORED
+     * @return array
+     * @throws \KafkaException
+     */
+    public function consumeBatch($batchSize = -1, $offset = \Kafka::OFFSET_STORED)
     {
-        throw new \KafkaException('Method not implemented yet');
+        if ($this->mode != \Kafka::MODE_CONSUMER)
+            throw new \KafkaException('consume-calls require topic in consumer mode');
+        if ($batchSize < -1 || $batchSize == 0)
+            throw new \KafkaException('Invalid value for batchSize argument (-1 or positive int expected)');
+        //messages are added asynchronously to this object
+        $internal = [];
+        return $internal
     }
 }

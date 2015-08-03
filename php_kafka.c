@@ -2012,7 +2012,7 @@ PHP_METHOD(KafkaTopic, consume)
 }
 /* }}} end proto KafkaTopic::consume */
 
-/* {{{ proto array KafkaTopic::consumeBatch( [ int $batchSize = 50 [, mixed $offset =  Kafka::OFFSET_STORED ] ])
+/* {{{ proto array KafkaTopic::consumeBatch( [ int $batchSize = -1 [, mixed $offset =  Kafka::OFFSET_STORED ] ])
  * Note that the array returned by this method CAN change over time, still... we need a separate class to cancel/destroy the consume queue
  * And track its process
  */
@@ -2021,7 +2021,7 @@ PHP_METHOD(KafkaTopic, consumeBatch)
     zval *obj = getThis();
     char *offset = NULL;
     int status, offset_len = 0;
-    long item_count = 1;
+    long item_count = -1;
     kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(obj TSRMLS_CC);
     if (topic->rk_type != RD_KAFKA_CONSUMER)
     {
@@ -2034,6 +2034,15 @@ PHP_METHOD(KafkaTopic, consumeBatch)
     }
     if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|ls", &item_count, &offset, &offset_len) != SUCCESS)
         return;//fatal
+    if (item_count < -1 || item_count == 0)
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "Invalid value for batchSize argument (-1 or positive int expected)",
+            0 TSRMLS_CC
+        );
+        return;
+    }
     if (topic->meta == NULL)
     {
         topic->meta = get_topic_meta(topic->conn, topic->topic);
