@@ -172,8 +172,8 @@ ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_topic_consume, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO(arginf_kafka_topic_consume_batch, 0)
-    ZEND_ARG_INFO(0, offset)
     ZEND_ARG_INFO(0, batchSize)
+    ZEND_ARG_INFO(0, offset)
 ZEND_END_ARG_INFO()
 
 /* }}} end arginfo KafkaTopic */
@@ -1968,7 +1968,7 @@ PHP_METHOD(KafkaTopic, produceBatch)
 }
 /* }}} end proto KafkaTopic::produceBatch */
 
-/* {{{ proto KafkaTopic::consume( [ int $messageCount = 1 [, mixed $offset =  null]] )
+/* {{{ proto array KafkaTopic::consume( [ int $messageCount = 1 [, mixed $offset =  Kafka::OFFSET_STORED]] )
  * Consume X messages starting at $offset (default last), default $messageCount is 1
  */
 PHP_METHOD(KafkaTopic, consume)
@@ -2010,8 +2010,49 @@ PHP_METHOD(KafkaTopic, consume)
         zend_throw_exception(kafka_exception, "Failed to consume messages", status TSRMLS_CC);
     }
 }
+/* }}} end proto KafkaTopic::consume */
 
+/* {{{ proto array KafkaTopic::consumeBatch( [ int $batchSize = 50 [, mixed $offset =  Kafka::OFFSET_STORED ] ])
+ * Note that the array returned by this method CAN change over time, still... we need a separate class to cancel/destroy the consume queue
+ * And track its process
+ */
 PHP_METHOD(KafkaTopic, consumeBatch)
 {
-    zend_throw_exception(kafka_exception, "Not implemented yet", 0 TSRMLS_CC);
+    zval *obj = getThis();
+    char *offset = NULL;
+    int status, offset_len = 0;
+    long item_count = 1;
+    kafka_topic *topic = (kafka_topic *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (topic->rk_type != RD_KAFKA_CONSUMER)
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "consume-calls require a topic in consumer-mode",
+            0 TSRMLS_CC
+        );
+        return;
+    }
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|ls", &item_count, &offset, &offset_len) != SUCCESS)
+        return;//fatal
+    if (topic->meta == NULL)
+    {
+        topic->meta = get_topic_meta(topic->conn, topic->topic);
+        if (topic->meta == NULL)
+        {
+            zend_throw_exception(
+                kafka_exception,
+                "Failed to fetch metadata for topic",
+                0 TSRMLS_CC
+            );
+        }
+    }
+    if (!offset_len)
+        offset = PHP_KAFKA_OFFSET_STORED;
+    array_init(return_value);
+    status = kafka_topic_consume_batch(topic->conn, topic->topic, topic->meta, return_value, offset, item_count);
+    if (status)
+    {
+        zend_throw_exception(kafka_exception, "Failed to consume messages", status TSRMLS_CC);
+    }
 }
+/* }}} end proto KafkaTopic::consumeBatch */
