@@ -259,10 +259,14 @@ PHP_MINIT_FUNCTION(kafka)
     kafka_topic_ce = zend_register_internal_class(&ce_t TSRMLS_CC);
     //add create_object handler & make final
     kafka_topic_ce->create_object = create_kafka_topic;
+    //do not allow KafkaTopic instances to be cloned
+    kafka_topic_ce->clone_obj = NULL;
     kafka_topic_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
 
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
+    //Kafka instances cannot be cloned
+    kafka_ce->clone_obj = NULL;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
     //offset constants (consume)
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_BEGIN, STRING);
