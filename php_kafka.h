@@ -43,6 +43,12 @@
 #define PHP_KAFKA_CONFIRM_OFF 0
 #define PHP_KAFKA_CONFIRM_BASIC 1
 #define PHP_KAFKA_CONFIRM_EXTENDED 2
+//queue constants
+#define PHP_KAFKA_QUEUE_IDLE 1
+#define PHP_KAFKA_QUEUE_CONSUMING (1 << 1)
+#define PHP_KAFKA_QUEUE_PAUZED (1 << 2)
+#define PHP_KAFKA_QUEUE_DONE (1 << 3)
+
 extern zend_module_entry kafka_module_entry;
 
 PHP_MSHUTDOWN_FUNCTION(kafka);
@@ -89,6 +95,27 @@ typedef struct _kafka_topic_r {
     const rd_kafka_metadata_t   *meta;
 } kafka_topic;
 
+//params to use in async consume calls
+struct kafka_queue_params {
+    zval        *msg_arr;
+    int         consume_pauze;
+    long        batch_size;
+    long        item_count;
+    zend_bool   is_done;
+    char        error_msg[512];
+    int         *partition_ends;
+    int         eop;
+};
+
+//internal structure of KafkaQueue object
+typedef struct _kafka_consume_queue_r {
+    zend_object                 std;
+    zval                        *topic_ref;
+    rd_kafka_queue_t            *queue;
+    int                         status;
+    struct kafka_queue_params   params;
+} kafka_queue;
+
 #define GET_KAFKA_CONNECTION(varname, thisObj) \
     kafka_connection *varname = (kafka_connection *) zend_object_store_get_object( \
         thisObj TSRMLS_CC \
@@ -96,6 +123,11 @@ typedef struct _kafka_topic_r {
 
 #define GET_KAFKA_TOPIC(varname, thisObj) \
     kafka_topic *varname = (kafka_topic *) zend_object_store_get_object( \
+        thisObj TSRMLS_CC \
+    )
+
+#define GET_KAFKA_QUEUE(varname, thisObj) \
+    kafka_queue *varname = (kafka_queue *) zend_object_store_get_object( \
         thisObj TSRMLS_CC \
     )
 
@@ -141,8 +173,11 @@ typedef struct _kafka_topic_r {
 zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC);
 //attach topic
 zend_object_value create_kafka_topic(zend_class_entry *class_type TSRMLS_DC);
+//attach queue object
+zend_object_value create_kafka_queue(zend_class_entry *class_type TSRMLS_DC);
 
 void free_kafka_connection(void *object TSRMLS_DC);
 void free_kafka_topic(void *object TSRMLS_DC);
+void free_kafka_queue(void *object TSRMLS_DC);
 
 #endif

@@ -50,6 +50,10 @@ ZEND_GET_MODULE(kafka)
 zend_class_entry *kafka_ce;
 zend_class_entry *kafka_topic_ce;
 zend_class_entry *kafka_exception;
+zend_class_entry *kafka_queue_ce;
+
+/* We don't want to allow clone for any of our objects */
+static zend_object_handlers kafka_handlers;
 
 
 /* {{{ arginfo Kafka */
@@ -188,9 +192,39 @@ static PHP_METHOD(KafkaTopic, consume);
 static PHP_METHOD(KafkaTopic, consumeBatch);
 /* }}} end KafkaTopic methods */
 
+/* {{{ arginfo KafkaQueue */
+ZEND_BEGIN_ARG_INFO(arginf_kafka_queue_void, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_queue_get_messages, 0, 0, 0)
+    ZEND_ARG_INFO(0, andStop)
+ZEND_END_ARG_INFO()
+/* }}} end KafkaQueue arginfo */
+
+/* {{{ KafkaQueue method decl */
+static PHP_METHOD(KafkaQueue, getStatus);
+static PHP_METHOD(KafkaQueue, getMessages);
+static PHP_METHOD(KafkaQueue, stop);
+static PHP_METHOD(KafkaQueue, pauze);
+static PHP_METHOD(KafkaQueue, resume);
+static PHP_METHOD(KafkaQueue, __destruct);
+/* }}} end KafkaQueue methods */
+
 /* {{{ Method tables */
+
+//KafkaQueue
+static zend_function_entry kafka_queue_functions[] = {
+    PHP_ME(KafkaQueue, getStatus, arginf_kafka_queue_void, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaQueue, getMessages, arginf_kafka_queue_get_messages, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaQueue, stop, arginf_kafka_queue_void, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaQueue, pauze, arginf_kafka_queue_void, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaQueue, resume, arginf_kafka_queue_void, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaQueue, __destruct, arginf_kafka_queue_void, ZEND_ACC_PUBLIC)
+    {NULL,NULL,NULL}
+};
+
 //KafkaTopic
-static zend_function_entry kafka_topic_function[] = {
+static zend_function_entry kafka_topic_functions[] = {
     PHP_ME(KafkaTopic, __construct, arginf_kafka_topic__constr, ZEND_ACC_CTOR | ZEND_ACC_PUBLIC)
     PHP_ME(KafkaTopic, getName, arginf_kafka_topic_void, ZEND_ACC_PUBLIC)
     PHP_ME(KafkaTopic, getPartitionCount, arginf_kafka_topic_void, ZEND_ACC_PUBLIC)
@@ -244,6 +278,15 @@ PHP_MINIT_FUNCTION(kafka)
     zend_class_entry ce,
             ce_ex,
             ce_t;
+    //setup the default kafka handlers
+    memcpy(
+        &kafka_handlers,
+        zend_get_std_object_handlers(),
+        sizeof kafka_handlers
+    );
+    //disable cloning!
+    kafka_handlers.clone_obj = NULL;
+
     //register Kafka class
     INIT_CLASS_ENTRY(ce, "Kafka", kafka_functions);
     kafka_ce = zend_register_internal_class(&ce TSRMLS_CC);
@@ -255,18 +298,14 @@ PHP_MINIT_FUNCTION(kafka)
         NULL TSRMLS_CC
     );
     //register KafkaTopic class
-    INIT_CLASS_ENTRY(ce_t, "KafkaTopic", kafka_topic_function);
+    INIT_CLASS_ENTRY(ce_t, "KafkaTopic", kafka_topic_functions);
     kafka_topic_ce = zend_register_internal_class(&ce_t TSRMLS_CC);
     //add create_object handler & make final
     kafka_topic_ce->create_object = create_kafka_topic;
-    //do not allow KafkaTopic instances to be cloned
-    kafka_topic_ce->clone_obj = NULL;
     kafka_topic_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
 
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
-    //Kafka instances cannot be cloned
-    kafka_ce->clone_obj = NULL;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
     //offset constants (consume)
     REGISTER_KAFKA_CLASS_CONST(kafka_ce, OFFSET_BEGIN, STRING);
@@ -365,8 +404,44 @@ zend_object_value create_kafka_topic(zend_class_entry *class_type TSRMLS_DC)
         free_kafka_topic,
         NULL TSRMLS_CC
     );
-    retval.handlers = zend_get_std_object_handlers();
+    retval.handlers = &kafka_handlers;
 
+    return retval;
+}
+
+zend_object_value create_kafka_queue(zend_class_entry *class_type TSRMLS_DC)
+{
+    zend_object_value retval;
+    kafka_queue *q_intern;
+    zval *tmp;
+
+    q_intern = emalloc(sizeof *q_intern);
+    memset(q_intern, 0, sizeof *q_intern);
+    q_intern->params.batch_size = 0;
+    q_intern->status = PHP_KAFKA_QUEUE_IDLE;
+    ALLOC_ZVAL(q_intern->params.msg_arr);
+    INIT_ZVAL(*q_intern->params.msg_arr);
+    array_init(q_intern->params.msg_arr);
+
+    zend_object_std_init(&q_intern->std, class_type TSRMLS_CC);
+#if PHP_VERSION_ID < 50399
+    zend_hash_copy(
+        q_intern->std.properties, &class_type->default_properties,
+        (copy_ctor_func_t)zval_add_ref,
+        (void *)&tmp,
+        sizeof tmp
+    );
+#else
+    object_properties_init(&q_intern->std, class_type);
+#endif
+    // create a destructor for this struct
+    retval.handle = zend_objects_store_put(
+        q_intern,
+        (zend_objects_store_dtor_t) zend_objects_destroy_object,
+        free_kafka_queue,
+        NULL TSRMLS_CC
+    );
+    retval.handlers = &kafka_handlers;
     return retval;
 }
 
@@ -410,9 +485,26 @@ zend_object_value create_kafka_connection(zend_class_entry *class_type TSRMLS_DC
         free_kafka_connection,
         NULL TSRMLS_CC
     );
-    retval.handlers = zend_get_std_object_handlers();
+    retval.handlers = &kafka_handlers;
 
     return retval;
+}
+
+//dtor handle for KafkaQueue
+void free_kafka_queue(void *object TSRMLS_DC)
+{
+    kafka_queue *queue = (kafka_queue *) object;
+    if (queue->queue)
+    {
+        //@todo: close queue with info in topic_ref
+    }
+    if (queue->topic_ref)
+    {//remove reference, so topic can be GC'ed
+        Z_DELREF_P(queue->topic_ref);
+        //gone
+        queue->topic_ref = NULL;
+    }
+    efree(queue);
 }
 
 //dtor handle for KafkaTopic instances... needs some work, though...
@@ -2069,3 +2161,113 @@ PHP_METHOD(KafkaTopic, consumeBatch)
     }
 }
 /* }}} end proto KafkaTopic::consumeBatch */
+
+/* {{{ proto int KafkaQueue::getStatus( void )
+ * returns the status in KafkaQueue::* status constant form
+ */
+PHP_METHOD(KafkaQueue, getStatus)
+{
+    zval *obj = getThis();
+    kafka_queue *queue= (kafka_queue *) zend_object_store_get_object(obj TSRMLS_CC);
+    RETURN_LONG(queue->status);
+}
+
+/* {{{ proto array KafkaQueue::getMessages( [ bool $andStop = false ] )
+ * Get messages consumed, and stop if desired
+ */
+PHP_METHOD(KafkaQueue, getMessages)
+{
+    zval *obj = getThis();
+    zend_bool and_stop = 0;
+    int pauzed = 0;
+    kafka_queue *queue= (kafka_queue *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (queue->status != PHP_KAFKA_QUEUE_IDLE)
+    {
+        if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|b", &and_stop) != SUCCESS)
+            return;//fatal
+        ZVAL_COPY_VALUE(return_value, queue->params.msg_arr);
+        if (and_stop)
+        {
+            queue->status = PHP_KAFKA_QUEUE_DONE;
+            //@todo stop queue
+        }
+        else if (queue->status == PHP_KAFKA_QUEUE_CONSUMING)
+        {
+            pauzed = 1;
+            //we're currently consuming, pauze while copying
+            queue->params.consume_pauze = 1;
+        }
+        zval_copy_ctor(return_value);
+        if (pauzed)
+        {
+            queue->params.consume_pauze = 0;
+        }
+    }
+    else
+    {
+        array_init(return_value);//create new, empty, array
+    }
+}
+/* }}} end proto KafkaQueue::getMessages */
+
+/* {{{ proto KafkaTopic KafkaTopic::stop( void )
+ * Stop consuming
+ */
+PHP_METHOD(KafkaQueue, stop)
+{
+    zval *obj = getThis();
+    kafka_queue *queue= (kafka_queue *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (queue->status != PHP_KAFKA_QUEUE_IDLE && queue->status != PHP_KAFKA_QUEUE_DONE)
+    {
+        //@todo implement stop consume
+    }
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto KafkaQueue::stop */
+
+/* {{{ proto KafkaTopic KafkaTopic::pauze( void )
+ * pauze consuming
+ */
+PHP_METHOD(KafkaQueue, pauze)
+{
+    zval *obj = getThis();
+    kafka_queue *queue= (kafka_queue *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (queue->status == PHP_KAFKA_QUEUE_CONSUMING)
+    {
+        queue->status = PHP_KAFKA_QUEUE_PAUZED;
+        queue->params.consume_pauze = 1;
+    }
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto KafkaTopic::pauze */
+
+/* {{{ proto KafkaTopic KafkaTopic::resume( void )
+ * resume consuming
+ */
+PHP_METHOD(KafkaQueue, resume)
+{
+    zval *obj = getThis();
+    kafka_queue *queue= (kafka_queue *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (queue->status != PHP_KAFKA_QUEUE_PAUZED)
+    {
+        zend_throw_exception(
+            kafka_exception,
+            "Cannot resume consuming on a queue that is not pauzed",
+            0 TSRMLS_CC
+        );
+    }
+    queue->params.consume_pauze = 0;
+    queue->status = PHP_KAFKA_QUEUE_CONSUMING;
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto KafkaTopic::resume */
+
+/* {{{ proto void KafkaTopic::__destruct( void )
+ * destructor (do we need this?)
+ */
+PHP_METHOD(KafkaQueue, __destruct)
+{
+    zval *obj = getThis();
+    kafka_queue *queue= (kafka_queue *) zend_object_store_get_object(obj TSRMLS_CC);
+    Z_DELREF_P(queue->params.msg_arr);
+}
