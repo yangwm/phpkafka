@@ -1148,6 +1148,117 @@ void async_consume_queue_cb(rd_kafka_message_t *message, void *opaque)
     }
 }
 
+int kafka_topic_consume_batch_stop(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata_t *meta, rd_kafka_queue_t *queue, void **zval_opaque)
+{
+    int i, p;
+    int32_t max = 0, partition = 0;
+    p = meta->topics->partition_cnt;
+    //perhaps get the partition ids from the queue struct (php internal object struct)
+    for (i=0;i<p;++i)
+    {
+        partition = meta->topics->partitions[i].id;
+        rd_kafka_consume_stop(topic, partition);
+    }
+    rd_kafka_queue_destroy(queue);
+    //do we need to poll? probably unsafe not to wait and deallocate the opaque ptr here
+    while(rd_kafka_outq_len(conn) > 0)
+        rd_kafka_poll(conn, 5);
+
+    free(*zval_opaque);
+    *zval_opaque = NULL;
+
+    return 0;
+}
+
+int kafka_topic_consume_batch_queue(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata *meta, zval *return_value, const char *offset, int item_count, void **zval_opaque)
+{
+    //check for NULL pointers, all arguments are required!
+    if (conn == NULL || return_value == NULL || topic == NULL || offset == NULL || strlen(offset) == 0 || zval_opaque == NULL)
+        return -10;
+    rd_kafka_queue_t *queue = rd_kafka_queue_new(conn);
+    int current, p, i = 0;
+    int32_t max = 0, partition = 0;
+    int64_t start;
+    struct consume_cb_async_s * opaque = malloc(sizeof *opaque);
+    //assign ptr to zval opaque, so we can use it to stop consuming without leaking memory
+    *zval_opaque = opaque;
+    if (!opaque)
+        return -11;
+    opaque->read_count = item_count;
+    opaque->return_value = return_value;
+    opaque->partition_ends = NULL;
+    opaque->error_count = 0;
+    p = opaque->eop = meta->topics->partition_cnt;
+    opaque->conn = conn;
+    opaque->queue = queue;
+    opaque->meta = meta;
+    struct consume_cb_params cb_params = {item_count, return_value, NULL, 0, 0, 0};
+
+    if (!strcmp(offset, "end"))
+        start = RD_KAFKA_OFFSET_END;
+    else if (!strcmp(offset, "beginning"))
+        start = RD_KAFKA_OFFSET_BEGINNING;
+    else if (!strcmp(offset, "stored"))
+        start = RD_KAFKA_OFFSET_STORED;
+    else
+        start = strtoll(offset, NULL, 10);
+
+    cb_params.partition_ends = calloc(sizeof *cb_params.partition_ends, p);
+    if (cb_params.partition_ends == NULL)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - Failed to read %s from %"PRId64" (%s)", meta->topics->topic, start, offset);
+        }
+        rd_kafka_queue_destroy(queue);
+        return -1;
+    }
+    cb_params.eop = p;
+    for (i=0;i<p;++i)
+    {
+        partition = meta->topics[0].partitions[i].id;
+        if (partition > max)
+        {
+            max = partition;
+        }
+        if (rd_kafka_consume_start_queue(topic, partition, start, queue))
+        {
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_ERR,
+                    "Failed to start consuming topic %s [%"PRId32"]: %s",
+                    meta->topics->topic, partition, offset
+                );
+            }
+            opaque->eop -= 1;//one less partition to worry about
+            continue;
+        }
+    }
+
+    opaque->partition_ends = calloc(max, sizeof *opaque->partition_ends);
+    if (!opaque->partition_ends)
+    {
+        for (i=0;i<p; ++i)
+        {
+            rd_kafka_consume_stop(topic, meta->topics->partitions[i].id);
+        }
+        rd_kafka_queue_destroy(queue);
+        free(opaque);
+        return 1;
+    }
+
+    for (i=0;i<p;++i)
+    {
+        partition = meta->topics->partitions[i].id;
+        opaque->partition_ends[partition] = 1;
+    }
+
+    rd_kafka_consume_callback_queue(queue, 200, async_consume_queue_cb, opaque);
+    return 0;
+}
+
 int kafka_topic_consume_batch(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata *meta, zval *return_value, const char *offset, int item_count)
 {
     //check for NULL pointers, all arguments are required!

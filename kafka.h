@@ -38,7 +38,9 @@ typedef struct rd_kafka_metadata rd_kafka_metadata_t;
 int kafka_topic_produce(rd_kafka_t* conn, rd_kafka_topic_t *topic, char* msg, int msg_len);
 int kafka_topic_produce_batch(rd_kafka_t *conn, rd_kafka_topic_t *topic, char **msg, int *msg_len, int msg_cnt, int report);
 int kafka_topic_consume(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata *meta, zval *return_value, const char *offset, int item_count);
+int kafka_topic_consume_batch_queue(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata *meta, zval *return_value, const char *offset, int item_count, void **zval_opaque);
 int kafka_topic_consume_batch(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata *meta, zval *return_value, const char *offset, int item_count);
+int kafka_topic_consume_batch_stop(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata_t *meta, rd_kafka_queue_t *queue, void **zval_opaque);
 
 void kafka_setup(char *brokers);
 void kafka_set_log_level(int ll);

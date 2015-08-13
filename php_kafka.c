@@ -2149,11 +2149,18 @@ PHP_METHOD(KafkaTopic, consumeBatch)
                 "Failed to fetch metadata for topic",
                 0 TSRMLS_CC
             );
+            return;
         }
     }
+    //init queue object:
+    //object_init_ex(return_value, kafka_queue_ce);
+    //kafka_queue *queue= (kafka_queue *) zend_object_store_get_object(return_value TSRMLS_CC);
+    //consume_batch will be using the msg_array zval rather than the return_value (will be instance of KafkaQueue)
+    //array_init(queue->params.msg_arr);
     if (!offset_len)
         offset = PHP_KAFKA_OFFSET_STORED;
     array_init(return_value);
+    //status = kafka_topic_consume_batch(topic->conn, topic->topic, topic->meta, queue->params.msg_arr, offset, item_count, &queue->opaque);
     status = kafka_topic_consume_batch(topic->conn, topic->topic, topic->meta, return_value, offset, item_count);
     if (status)
     {

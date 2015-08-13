@@ -35,3 +35,5 @@ CMake*
 main.c
 *.cbp
 *.cmake
+phpkafka.layout
+

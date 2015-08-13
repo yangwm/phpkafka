@@ -114,6 +114,7 @@ typedef struct _kafka_consume_queue_r {
     rd_kafka_queue_t            *queue;
     int                         status;
     struct kafka_queue_params   params;
+    void                        *opaque;
 } kafka_queue;
 
 #define GET_KAFKA_CONNECTION(varname, thisObj) \
