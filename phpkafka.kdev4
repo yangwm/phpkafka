@@ -1,0 +1,4 @@
+[Project]
+Name=phpkafka
+Manager=KDevCMakeManager
+VersionControl=kdevgit
