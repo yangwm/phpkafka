@@ -277,7 +277,8 @@ PHP_MINIT_FUNCTION(kafka)
 {
     zend_class_entry ce,
             ce_ex,
-            ce_t;
+            ce_t,
+            ce_q;
     //setup the default kafka handlers
     memcpy(
         &kafka_handlers,
@@ -304,6 +305,15 @@ PHP_MINIT_FUNCTION(kafka)
     kafka_topic_ce->create_object = create_kafka_topic;
     kafka_topic_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
 
+    //register KafkaQueue class
+    INIT_CLASS_ENTRY(cq_q, "KafkaQueue", kafka_queue_functions);
+    kafka_queue_ce = zend_register_internal_class(&ce_q TSRMLS_CC);
+    //add cerate handler, make final
+    kafka_queue_ce->create_object = create_kafka_queue;
+    kafka_queue_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
+    //add internal property (for topic reference)
+    //5 = strlen("topic")
+    zend_declare_property_null(kafka_queue_ce, "topic", 5 TSRMLS_DC);
     //do not allow people to extend this class, make it final
     kafka_ce->create_object = create_kafka_connection;
     kafka_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
