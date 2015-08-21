@@ -8,8 +8,8 @@ static zend_object_handlers topic_handlers;
 
 zend_class_entry *topic_ce;
 
-/* {{{ static binding functions, the actual rdkafka stuff here */
-static
+/* {{{ external, then static binding functions, the actual rdkafka stuff here */
+
 int kafka_open_topic(kafka_topic *topic)
 {
     if (topic->conn == NULL)
@@ -99,6 +99,7 @@ PHP_METHOD(KafkaTopic, __construct)
         connection->producer = NULL;
         topic->rk_type = RD_KAFKA_PRODUCER;
     }
+    topic->topic_name = estrdup(topic_name);
     //if init failed, see if we can't restore the connection to the Kafka instance?
     if (kafka_open_topic(topic))
     {
@@ -107,9 +108,9 @@ PHP_METHOD(KafkaTopic, __construct)
         else
             connection->consumer = topic->conn;
         topic->conn = NULL;
+        efree(topic->topic_name);
         return;
     }
-    topic->topic_name = estrdup(topic_name);
 }
 /* }}} end KafkaTopic::__construct */
 

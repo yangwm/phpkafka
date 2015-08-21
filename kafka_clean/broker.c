@@ -503,6 +503,90 @@ PHP_METHOD(Kafka, getTopics)
 }
 /* }}} end Kafka::getTopics */
 
+/* {{{ proto KafkaTopic Kafka::getTopic( string $topicName, int $mode)
+ * Return instance of KafkaTopic to use for producing or consuming
+ */
+PHP_METHOD(Kafka, getTopic)
+{
+    zval *obj = getThis();
+    kafka_connection *connection = zend_object_store_get_object(obj TSRMLS_CC);
+    kafka_topic *topic;
+    char *topic_name;
+    int topic_name_len, errcode;
+    long mode = 0;//PHP_KAFKA_MODE_CONSUMER default?
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &topic_name, &topic_name_len, &mode) != SUCCESS)
+        return;//fatal
+    //topic_name argument validation is handled by KafkaTopic constructor
+    if (mode != PHP_KAFKA_MODE_CONSUMER && mode != PHP_KAFKA_MODE_PRODUCER)
+    {
+        zend_throw_exception(kafka_exception_ce, "Invalid mode, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    if (mode == PHP_KAFKA_MODE_CONSUMER)
+    {
+        if (connection->consumer == NULL)
+        {
+            errcode = kafka_get_connection(connection, RD_KAFKA_CONSUMER);
+            if (errcode)
+            {//exception was already thrown/warning was emitted
+                if (errcode == 1)
+                {//1 means a warning was issued, and no exception was thrown
+                    ZVAL_NULL(return_value);
+                }
+                return;
+            }
+        }
+    }
+    else // if (mode == PHP_KAFKA_MODE_PRODUCER)
+    {//assume
+        if (connection->producer == NULL)
+        {
+            errcode = kafka_get_connection(connection, RD_KAFKA_PRODUCER);
+            if (errcode)
+            {//exception was already thrown/warning was emitted
+                if (errcode == 1)
+                {//1 means a warning was issued, and no exception was thrown
+                    ZVAL_NULL(return_value);
+                }
+                return;
+            }
+        }
+    }
+
+    //init return value to topic_ce instance
+    object_init_ex(return_value, topic_ce);
+    topic = zend_object_store_get_object(return_value TSRMLS_CC);
+    if (mode == PHP_KAFKA_MODE_CONSUMER)
+    {
+        topic->conn = connection->consumer;
+        connection->consumer = NULL;
+        topic->rk_type =RD_KAFKA_CONSUMER;
+    }
+    else
+    {
+        topic->conn = connection->producer;
+        connection->producer = NULL;
+        topic->rk_type =RD_KAFKA_PRODUCER;
+    }
+    topic->topic_name = estrdup(topic_name);
+    //init function is currently NOT exposed, so we need a way to fix that
+    //make it external? Add another translation unit with common kafka functions?
+    //or call constructor as if the user wrote new KafkaTopic(Kafka, $name, $mode);?
+    //using this:
+    //CALL_METHOD3(KafkaTopic, __construct, return_value, return_value, obj, &z_topic_name, &z_mode);
+    //for now, let's expose that init functionS
+    if (kafka_open_topic(topic))
+    {
+        efree(topic->topic_name);
+        if (mode == PHP_KAFKA_MODE_CONSUMER)
+            connection->consumer = topic->conn;
+        else
+            connection->producer = topic->conn;
+        topic->conn = NULL;
+    }
+}
+/* }}} end Kafka::getTopic */
+
 static zend_function_entry broker_methods[] = {
     PHP_ME(Kafka, __construct, arginf_kafka__constr, ZEND_ACC_PUBLIC | ZEND_ACC_CTOR)
     PHP_ME(Kafka, getTopics, arginf_kafka_void, ZEND_ACC_PUBLIC)

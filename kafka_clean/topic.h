@@ -18,4 +18,6 @@ typedef struct _kafka_topic {
     const rd_kafka_metadata_t   *meta;
 } kafka_topic;
 
+int kafka_open_topic(kafka_topic *topic);
+
 #endif
