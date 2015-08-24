@@ -3,12 +3,76 @@
 #include "broker.h"
 #include "queue.h"
 #include "kafka_exception.h"
+#include <stddef.h>
 
 static zend_object_handlers topic_handlers;
 
 zend_class_entry *topic_ce;
 
-/* {{{ external, then static binding functions, the actual rdkafka stuff here */
+/* {{{ internal types, callback structs etc... */
+struct produce_cb_params {
+    int msg_count;
+    int err_count;
+    int offset;
+    int partition;
+    int errmsg_len;
+    char *err_msg;
+};
+/* }}} end internal types */
+
+/* {{{ static, then external binding functions, the actual rdkafka stuff here */
+
+//callback for produce calls
+static
+void kafka_topic_produce_cb(rd_kafka_t *rk, const rd_kafka_message_t *msg, void *opaque)
+{
+    struct produce_cb_params *params = opaque;
+    params->msg_count -= 1;
+    if (msg->err)
+    {
+        const char *errstr = rd_kafka_message_errstr(msg);
+        params->err_count += 1;
+        params->errmsg_len = strlen(errstr);
+        params->err_msg = estrdup(errstr);
+        return;
+    }
+    params->offset = msg->offset;
+    params->partition = msg->partition;
+}
+
+static
+int kafka_topic_produce(kafka_topic *topic, char* msg, int msg_len)
+{
+    struct produce_cb_params pcb = {1, 0, 0, 0, 0, NULL};
+    void *opaque = &pcb;
+    if (rd_kafka_produce(topic->topic, RD_KAFKA_PARTITION_UA, RD_KAFKA_MSG_F_COPY, msg, msg_len,NULL, 0,opaque) == -1)
+    {
+        zend_throw_exception(
+            kafka_exception_ce,
+            rd_kafka_err2str(
+                rd_kafka_errno2err(errno)
+            ),
+            errno TSRMLS_CC
+        );
+        return -1;
+    }
+
+    /* Poll to handle delivery reports */
+    rd_kafka_poll(topic->conn, 10);
+
+    /* Wait for messages to be delivered */
+    while ((pcb.msg_count && rd_kafka_outq_len(topic->conn) > 0) || pcb.err_msg)
+      rd_kafka_poll(topic->conn, 5);
+    if (pcb.err_msg)
+    {//an error occurred, throw exception
+        zend_throw_excpetion(kafka_exception_ce, pcb.err_msg, 0 TSRMLS_CC);
+        efree(pcb.err_msg);
+        return -1;
+    }
+
+    return 0;
+}
+
 
 int kafka_open_topic(kafka_topic *topic)
 {
@@ -28,6 +92,8 @@ int kafka_open_topic(kafka_topic *topic)
             zend_throw_exception(kafka_exception_ce, errstr, 0 TSRMLS_CC);
             return -1;
         }
+        //simple confirm via rd_kafka_conf_set_dr_cb
+        rd_kafka_conf_set_dr_msg_cb(topic_conf, kafka_topic_produce_cb);
     }
     /* Create topic */
     rkt = rd_kafka_topic_new(topic->conn, topic->topic_name, topic_conf);
@@ -41,6 +107,7 @@ int kafka_open_topic(kafka_topic *topic)
     topic->config = topic_conf;
     return 0;
 }
+
 /* }}} end static bind functions */
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafkatopic__construct, 0, 0, 2)
@@ -128,12 +195,41 @@ PHP_METHOD(KafkaTopic, getName)
 }
 /* }}} end proto KafkaTopic::getName */
 
+ZEND_BEGIN_ARG_INFO(arginf_kafkatopic_produce, 0)
+    ZEND_ARG_INFO(message, 0)
+ZEND_END_ARG_INFO()
+
+/* {{{ proto KafkaTopic KafkaTopic::produce( string $message )
+    Produce a single message, throws KafkaException on error
+*/
+PHP_METHOD(KafkaTopic, produce)
+{
+    zval *this = getThis();
+    kafka_topic *topic = zend_object_store_get_object(this TSRMLS_CC);
+    char *msg;
+    int msg_len;
+    if (topic->rk_type != RD_KAFKA_PRODUCER)
+    {
+        zend_throw_exception(kafka_exception_ce, "KafkaTopic is consumer, not producer", 0 TSRMLS_CC);
+        return;
+    }
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &msg, &msg_len) != SUCCESS)
+        return;
+    if (kafka_topic_produce(topic, msg, msg_len))
+    {
+        return;//exception was thrown
+    }
+    //all went well, return this (@todo -> return assoc array? partition => offset?)
+    RETURN_ZVAL(this, 1, 0);
+}
+/* }}} end proto KafkaTopic::produce */
 
 //methods
 static
 zend_function_entry topic_methods[] = {
     PHP_ME(KafkaTopic, __construct, arginf_kafkatopic__construct, ZEND_ACC_PUBLIC | ZEND_ACC_CTOR)
     PHP_ME(KafkaTopic, getName, arginf_kafkatopic_get_name, ZEND_ACC_PUBLIC)
+    PHP_ME(KafkaTopic, produce, arginf_kafkatopic_produce, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL}
 };
 
