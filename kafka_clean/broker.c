@@ -486,6 +486,198 @@ PHP_METHOD(Kafka, __construct)
 }
 /* }}} end proto Kafka::__construct */
 
+/* {{{ proto string Kafka::getCompression( void )
+ * Get current compression mode
+ */
+PHP_METHOD(Kafka, getCompression)
+{
+    zval *obj = getThis();
+    kafka_connection *connection = (kafka_connection *) zend_object_store_get_object(obj TSRMLS_CC);
+    if (!connection->compression)
+        RETURN_STRING(PHP_KAFKA_COMPRESSION_NONE, 1);
+    RETURN_STRING(connection->compression, 1);
+}
+/* }}} end proto Kafka::getCompression */
+
+ZEND_BEGIN_ARG_INFO(arginf_kafka_set_brokers, 0)
+    ZEND_ARG_INFO(0, brokers)
+ZEND_END_ARG_INFO()
+
+/* {{{ proto Kafka Kafka::setBrokers( string $brokers )
+ * Set (new) brokers to connect to, resets opened connections
+ */
+PHP_METHOD(Kafka, setBrokers)
+{
+    zval *obj = getThis();
+    kafka_connection *conn = (kafka_connection *) zend_object_store_get_object(obj TSRMLS_CC);
+    char *brokers;
+    int broker_len;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &brokers, &broker_len) != SUCCESS)
+        return;
+    if (broker_len < 1)
+    {
+        zend_throw_exception(kafka_exception_ce, "Empty string not allowed", 0 TSRMLS_CC);
+        return;
+    }
+    if (conn->brokers)
+    {//brokers were set, connections might be open...
+        if (conn->consumer)
+        {
+            rd_kafka_destroy(conn->consumer);
+            rd_kafka_wait_destroyed(10);//shouldn't block too long
+        }
+        if (conn->producer)
+        {
+            rd_kafka_destroy(conn->producer);
+            rd_kafka_wait_destroyed(50);//wait a bit longer for produce calls
+        }
+        efree(conn->brokers);
+    }
+    conn->brokers = estrdup(brokers);
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto Kafka::setBrokers */
+
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_connect, 0, 0, 0)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+
+/* {{{ proto mixed Kafka::isConnected( [ int $mode = -1 ] )
+ * Returns bool if mode is given (KAFKA::MODE_*)
+ * array with Kafka::MODE_* as keys, each with bool values, true for connected
+ */
+PHP_METHOD(Kafka, isConnected)
+{
+    zval *obj = getThis();
+    kafka_connection *conn = (kafka_connection *) zend_object_store_get_object(obj TSRMLS_CC);
+    long mode = -1;
+    int connected = 0;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|l", &mode) != SUCCESS)
+        return;
+    if (mode != -1)
+    {
+        if (mode == PHP_KAFKA_MODE_CONSUMER)
+        {
+            if (conn->consumer)
+            {
+                RETURN_TRUE;
+            }
+            RETURN_FALSE;
+        }
+        if (mode == PHP_KAFKA_MODE_PRODUCER)
+        {
+            if (conn->producer)
+            {
+                RETURN_TRUE;
+            }
+            RETURN_FALSE;
+        }
+        zend_throw_exception(kafka_excpetion_ce, "Invalid mode, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    array_init(return_value);
+    //add mode keys + bool values:
+    if (conn->consumer)
+    {
+        connected = 1;
+    }
+    add_index_bool(return_value, PHP_KAFKA_MODE_CONSUMER, connected);
+    if (conn->producer)
+    {
+        connected = 1;
+    }
+    else
+    {
+        connected = 0;
+    }
+    add_index_bool(return_value, PHP_KAFKA_MODE_PRODUCER, connected);
+}
+/* }}} end proto Kafka::isConnected */
+
+/* {{{ proto Kafka Kafka::connect( [ int $mode = -1 ] )
+ * preload specific connection, or both if no mode argument is passed
+ */
+PHP_METHOD(Kafka, connect)
+{
+    zval *obj = getThis();
+    kafka_connection *conn = zend_object_store_get_object(obj TSRMLS_CC);
+    long mode = -1;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|l", &mode) != SUCCESS)
+        return;
+    if (mode == -1 || mode == PHP_KAFKA_MODE_CONSUMER)
+    {
+        if (conn->consumer == NULL)
+        {//do not connect twice...
+            if (kafka_get_connection(conn, RD_KAFKA_CONSUMER))
+            {//an exception was thrown, stop here
+                return;
+            }
+        }
+        if (mode == -1)
+        {
+            mode = PHP_KAFKA_MODE_PRODUCER;
+        }
+    }
+    if (mode == PHP_KAFKA_MODE_PRODUCER)
+    {
+        if (conn->producer == NULL)
+        {//again: don't connect twice
+            if (kafka_get_connection(connection, RD_KAFKA_CONSUMER))
+            {//an exception was thrown, stop here
+                return;
+            }
+        }
+    }
+    else
+    {//mode was invalid, stop here...
+        zend_throw_exception(kafka_exception_ce, "Invalid mode argument passed, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto Kafka::connect */
+
+/* {{{ proto Kafka Kafka::disconnect( [ int $mode = -1 ] )
+ * close specific connection, or both if no mode argument is passed
+ */
+PHP_METHOD(Kafka, disconnect)
+{
+    zval *obj = getThis();
+    kafka_connection *conn = (kafka_connection *) zend_object_store_get_object(obj TSRMLS_CC);
+    long mode = -1;
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|l", &mode) != SUCCESS)
+        return;
+    if (mode == -1 || mode == PHP_KAFKA_MODE_CONSUMER)
+    {
+        if (conn->consumer)
+        {//do not disconnect NULL connection
+            rd_kafka_destroy(conn->consumer);
+            rd_kafka_wait_destroyed(10);//shouldn't block too long
+            conn->consumer = NULL;
+        }
+        if (mode == -1)
+        {
+            mode = PHP_KAFKA_MODE_PRODUCER;
+        }
+    }
+    if (mode == PHP_KAFKA_MODE_PRODUCER)
+    {
+        if (conn->producer)
+        {
+            rd_kafka_destroy(conn->producer);
+            rd_kafka_wait_destroyed(10);//shouldn't block too long
+            conn->producer = NULL;
+        }
+    }
+    else
+    {
+        zend_throw_exception(kafka_exception_ce, "Invalid mode argument passed, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        return;
+    }
+    RETURN_ZVAL(obj, 1, 0);
+}
+/* }}} end proto Kafka::disconnect */
+
 /* {{{ proto array Kafka::getTopics( void )
     Get all existing topics
 */
@@ -589,6 +781,11 @@ PHP_METHOD(Kafka, getTopic)
 
 static zend_function_entry broker_methods[] = {
     PHP_ME(Kafka, __construct, arginf_kafka__constr, ZEND_ACC_PUBLIC | ZEND_ACC_CTOR)
+    PHP_ME(Kafka, getCompression, arginf_kafka_void, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, setBrokers, arginf_kafka_set_brokers, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, isConnected, arginf_kafka_connect, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, connect, arginf_kafka_connect, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, disconnect, arginf_kafka_connect, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getTopics, arginf_kafka_void, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL}
 };
