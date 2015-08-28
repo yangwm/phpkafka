@@ -695,6 +695,11 @@ PHP_METHOD(Kafka, getTopics)
 }
 /* }}} end Kafka::getTopics */
 
+ZEND_BEGIN_ARG_INFO(arginf_kafka_get_topic, 0)
+    ZEND_ARG_INFO(0, topicName)
+    ZEND_ARG_INFO(0, mode)
+ZEND_END_ARG_INFO()
+
 /* {{{ proto KafkaTopic Kafka::getTopic( string $topicName, int $mode)
  * Return instance of KafkaTopic to use for producing or consuming
  */
@@ -775,6 +780,9 @@ PHP_METHOD(Kafka, getTopic)
         else
             connection->producer = topic->conn;
         topic->conn = NULL;
+        //reset to null (removes refcount?)
+        ZVAL_NULL(return_value);
+        zend_throw_exception(kafka_exception_ce, "Error opening topic", 0 TSRMLS_CC);
     }
 }
 /* }}} end Kafka::getTopic */
@@ -787,6 +795,7 @@ static zend_function_entry broker_methods[] = {
     PHP_ME(Kafka, connect, arginf_kafka_connect, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, disconnect, arginf_kafka_connect, ZEND_ACC_PUBLIC)
     PHP_ME(Kafka, getTopics, arginf_kafka_void, ZEND_ACC_PUBLIC)
+    PHP_ME(Kafka, getTopic, arginf_kafka_get_topic, ZEND_ACC_PUBLIC)
     {NULL,NULL,NULL}
 };
 
