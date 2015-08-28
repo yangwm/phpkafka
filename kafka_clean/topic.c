@@ -93,7 +93,7 @@ int kafka_open_topic(kafka_topic *topic)
             return -1;
         }
         //simple confirm via rd_kafka_conf_set_dr_cb
-        rd_kafka_conf_set_dr_msg_cb(topic_conf, kafka_topic_produce_cb);
+        rd_kafka_topic_conf_set_dr_msg_cb(topic_conf, kafka_topic_produce_cb);
     }
     /* Create topic */
     rkt = rd_kafka_topic_new(topic->conn, topic->topic_name, topic_conf);
@@ -196,7 +196,7 @@ PHP_METHOD(KafkaTopic, getName)
 /* }}} end proto KafkaTopic::getName */
 
 ZEND_BEGIN_ARG_INFO(arginf_kafkatopic_produce, 0)
-    ZEND_ARG_INFO(message, 0)
+    ZEND_ARG_INFO(0, message)
 ZEND_END_ARG_INFO()
 
 /* {{{ proto KafkaTopic KafkaTopic::produce( string $message )

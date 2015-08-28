@@ -572,7 +572,7 @@ PHP_METHOD(Kafka, isConnected)
             }
             RETURN_FALSE;
         }
-        zend_throw_exception(kafka_excpetion_ce, "Invalid mode, use Kafka::MODE_* constants", 0 TSRMLS_CC);
+        zend_throw_exception(kafka_exception_ce, "Invalid mode, use Kafka::MODE_* constants", 0 TSRMLS_CC);
         return;
     }
     array_init(return_value);
@@ -622,7 +622,7 @@ PHP_METHOD(Kafka, connect)
     {
         if (conn->producer == NULL)
         {//again: don't connect twice
-            if (kafka_get_connection(connection, RD_KAFKA_CONSUMER))
+            if (kafka_get_connection(conn, RD_KAFKA_CONSUMER))
             {//an exception was thrown, stop here
                 return;
             }
