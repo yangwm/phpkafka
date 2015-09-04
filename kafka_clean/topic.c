@@ -21,6 +21,15 @@ struct produce_cb_params {
 /* }}} end internal types */
 
 /* {{{ static, then external binding functions, the actual rdkafka stuff here */
+const rd_kafka_metadata_t *get_topic_meta(kafka_topic *topic)
+{
+    if (RD_KAFKA_RESP_ERR_NO_ERROR != rd_kafka_metadata(topic->conn, 0, topic->topic, &topic->meta, 200))
+    {
+        rd_kafka_metadata_destroy(topic->meta);
+        topic->meta = NULL;
+    }
+    return topic->meta;
+}
 
 //callback for produce calls
 static

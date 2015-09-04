@@ -7,6 +7,109 @@ zend_class_entry *queue_ce;
 
 static zend_object_handlers queue_handlers;
 
+/* {{{ Static functions -> actual librdkafka bindings here */
+static
+int kafka_consume_queue(kafka_topic *topic, kafka_queue *queue, const char *offset, int item_count)
+{
+    rd_kafka_t *conn = topic->conn;
+    rd_kafka_topic_t *rd_topic = topic->topic;
+    const struct rd_kafka_metadata *meta = topic->meta;
+    if (meta == NULL)
+    {
+        meta = get_topic_meta(topic);
+    }
+}
+
+int kafka_topic_consume_batch_queue(rd_kafka_t *conn, rd_kafka_topic_t *topic, const struct rd_kafka_metadata *meta, zval *return_value, const char *offset, int item_count, void **zval_opaque)
+{//old function, new one above
+    //check for NULL pointers, all arguments are required!
+    if (conn == NULL || return_value == NULL || topic == NULL || offset == NULL || strlen(offset) == 0 || zval_opaque == NULL)
+        return -10;
+    rd_kafka_queue_t *queue = rd_kafka_queue_new(conn);
+    int current, p, i = 0;
+    int32_t max = 0, partition = 0;
+    int64_t start;
+    struct consume_cb_async_s * opaque = malloc(sizeof *opaque);
+    //assign ptr to zval opaque, so we can use it to stop consuming without leaking memory
+    *zval_opaque = opaque;
+    if (!opaque)
+        return -11;
+    opaque->read_count = item_count;
+    opaque->return_value = return_value;
+    opaque->partition_ends = NULL;
+    opaque->error_count = 0;
+    p = opaque->eop = meta->topics->partition_cnt;
+    opaque->conn = conn;
+    opaque->queue = queue;
+    opaque->meta = meta;
+    struct consume_cb_params cb_params = {item_count, return_value, NULL, 0, 0, 0};
+
+    if (!strcmp(offset, "end"))
+        start = RD_KAFKA_OFFSET_END;
+    else if (!strcmp(offset, "beginning"))
+        start = RD_KAFKA_OFFSET_BEGINNING;
+    else if (!strcmp(offset, "stored"))
+        start = RD_KAFKA_OFFSET_STORED;
+    else
+        start = strtoll(offset, NULL, 10);
+
+    cb_params.partition_ends = calloc(sizeof *cb_params.partition_ends, p);
+    if (cb_params.partition_ends == NULL)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(LOG_INFO, "phpkafka - Failed to read %s from %"PRId64" (%s)", meta->topics->topic, start, offset);
+        }
+        rd_kafka_queue_destroy(queue);
+        return -1;
+    }
+    cb_params.eop = p;
+    for (i=0;i<p;++i)
+    {
+        partition = meta->topics[0].partitions[i].id;
+        if (partition > max)
+        {
+            max = partition;
+        }
+        if (rd_kafka_consume_start_queue(topic, partition, start, queue))
+        {
+            if (log_level)
+            {
+                openlog("phpkafka", 0, LOG_USER);
+                syslog(LOG_ERR,
+                    "Failed to start consuming topic %s [%"PRId32"]: %s",
+                    meta->topics->topic, partition, offset
+                );
+            }
+            opaque->eop -= 1;//one less partition to worry about
+            continue;
+        }
+    }
+
+    opaque->partition_ends = calloc(max, sizeof *opaque->partition_ends);
+    if (!opaque->partition_ends)
+    {
+        for (i=0;i<p; ++i)
+        {
+            rd_kafka_consume_stop(topic, meta->topics->partitions[i].id);
+        }
+        rd_kafka_queue_destroy(queue);
+        free(opaque);
+        return 1;
+    }
+
+    for (i=0;i<p;++i)
+    {
+        partition = meta->topics->partitions[i].id;
+        opaque->partition_ends[partition] = 1;
+    }
+
+    rd_kafka_consume_callback_queue(queue, 200, async_consume_queue_cb, opaque);
+    return 0;
+}
+/* }}} end static functions */
+
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafkaqueue_constr, 0, 0, 2)
     ZEND_ARG_OBJ_INFO(0, topic, KafkaTopic, 0)
     ZEND_ARG_INFO(0, mode)
@@ -23,7 +126,7 @@ PHP_METHOD(KafkaQueue, __construct)
         *topic = NULL,
         *buffer;
     long item_count = -1;
-    int offset_len;
+    int offset_len, mode = PHP_KAFKA_MODE_CONSUMER;
     char *offset = NULL;
     kafka_queue *queue = zend_object_store_get_object(this TSRMLS_CC);
     kafka_topic *topic_internal = NULL;
@@ -39,8 +142,17 @@ PHP_METHOD(KafkaQueue, __construct)
         return;
     }
     //set internal array property -> this will act as the buffer for our consume calls
-    MAKE_STD_ZVAL(buffer);
-    array_init(buffer);
+    if (queue->msg_arr == NULL)
+    {//consume -> we need to init the target array
+        MAKE_STD_ZVAL(buffer);
+        array_init(buffer);
+        queue->msg_arr = buffer;
+    }
+    else
+    {//produce -> struct contains messages to produce
+        buffer = queue->msg_arr;
+        mode = PHP_KAFKA_MODE_PRODUCER;
+    }
     zend_update_property(queue_ce, this, "queueBuffer", sizeof("queueBuffer") -1, buffer TSRMLS_CC);
     //keep a reference to the topic
     zend_update_property(queue_ce, this, "topic", sizeof("topic") -1, topic TSRMLS_CC);
