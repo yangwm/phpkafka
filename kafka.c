@@ -394,7 +394,7 @@ static void kafka_init( rd_kafka_type_t type )
     }
 }
 
-int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_len)
+int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_len, long timeout)
 {
     char errstr[512];
     rd_kafka_topic_t *rkt = NULL;
@@ -416,6 +416,25 @@ int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_le
     conf = rd_kafka_topic_conf_new();
 
     rd_kafka_topic_conf_set(conf,"produce.offset.report", "true", errstr, sizeof errstr );
+
+    char timeoutStr[64];
+    snprintf(timeoutStr, 64, "%lu", timeout);
+    if (rd_kafka_topic_conf_set(conf, "message.timeout.ms", timeoutStr, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(
+                LOG_ERR,
+                "Failed to configure topic param 'message.timeout.ms' to %lu before producing; config err was: %s",
+                timeout,
+                errstr
+            );
+        }
+        rd_kafka_topic_conf_destroy(conf);
+        return -3;
+    }
+
     //callback already set in kafka_set_connection
     rkt = rd_kafka_topic_new(r, topic, conf);
     if (!rkt)
@@ -428,6 +447,7 @@ int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_le
         rd_kafka_topic_conf_destroy(conf);
         return -1;
     }
+
     //begin producing:
     if (rd_kafka_produce(rkt, partition, RD_KAFKA_MSG_F_COPY, msg, msg_len,NULL, 0,&pcb) == -1)
     {

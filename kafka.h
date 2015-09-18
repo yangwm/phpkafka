@@ -37,7 +37,7 @@ void kafka_setup(char *brokers);
 void kafka_set_log_level(int ll);
 void kafka_set_partition(int partition);
 int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report, long timeout);
-int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_len);
+int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_len, long timeout);
 int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, int msg_cnt, int report);
 rd_kafka_t *kafka_set_connection(rd_kafka_type_t type, const char *b, int report_level, const char *compression);
 rd_kafka_t *kafka_get_connection(kafka_connection_params params, const char *brokers);

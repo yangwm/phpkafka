@@ -1059,7 +1059,7 @@ PHP_METHOD(Kafka, produce)
         (int) connection->producer_partition
     );
     if (connection->delivery_confirm_mode == PHP_KAFKA_CONFIRM_EXTENDED)
-        status = kafka_produce_report(connection->producer, topic, msg, msg_len);
+        status = kafka_produce_report(connection->producer, topic, msg, msg_len, timeout);
     else
         status = kafka_produce(connection->producer, topic, msg, msg_len, connection->delivery_confirm_mode, timeout);
     switch (status)
