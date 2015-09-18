@@ -411,6 +411,10 @@ int kafka_produce_report(rd_kafka_t *r, const char *topic, char *msg, int msg_le
         }
         return -2;
     }
+
+    /* Topic configuration */
+    conf = rd_kafka_topic_conf_new();
+
     rd_kafka_topic_conf_set(conf,"produce.offset.report", "true", errstr, sizeof errstr );
     //callback already set in kafka_set_connection
     rkt = rd_kafka_topic_new(r, topic, conf);
