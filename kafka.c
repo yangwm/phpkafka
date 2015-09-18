@@ -573,7 +573,7 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report
                 errstr
             );
         }
-        rd_kafka_topic_destroy(rkt);
+        rd_kafka_topic_conf_destroy(topic_conf);
         return -3;
     }
 
