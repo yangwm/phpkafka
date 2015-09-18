@@ -1061,7 +1061,7 @@ PHP_METHOD(Kafka, produce)
     if (connection->delivery_confirm_mode == PHP_KAFKA_CONFIRM_EXTENDED)
         status = kafka_produce_report(connection->producer, topic, msg, msg_len);
     else
-        status = kafka_produce(connection->producer, topic, msg, msg_len, connection->delivery_confirm_mode);
+        status = kafka_produce(connection->producer, topic, msg, msg_len, connection->delivery_confirm_mode, timeout);
     switch (status)
     {
         case -1:
@@ -1069,6 +1069,9 @@ PHP_METHOD(Kafka, produce)
             return;
         case -2:
             zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
+            return;
+        case -3:
+            zend_throw_exception(kafka_exception, "Topic configuration error", 0 TSRMLS_CC);
             return;
     }
     RETURN_ZVAL(object, 1, 0);

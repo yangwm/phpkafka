@@ -529,9 +529,10 @@ int kafka_produce_batch(rd_kafka_t *r, char *topic, char **msg, int *msg_len, in
     return err_cnt;
 }
 
-int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report)
+int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report, long timeout)
 {
 
+    char errstr[512];
     rd_kafka_topic_t *rkt;
     struct produce_cb_params pcb = {1, 0, 0, 0, 0, NULL};
     void *opaque;
@@ -557,6 +558,24 @@ int kafka_produce(rd_kafka_t *r, char* topic, char* msg, int msg_len, int report
 
     /* Topic configuration */
     topic_conf = rd_kafka_topic_conf_new();
+
+    char timeoutStr[64];
+    snprintf(timeoutStr, 64, "%lu", timeout);
+    if (rd_kafka_topic_conf_set(topic_conf, "message.timeout.ms", timeoutStr, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+    {
+        if (log_level)
+        {
+            openlog("phpkafka", 0, LOG_USER);
+            syslog(
+                LOG_ERR,
+                "Failed to configure topic param 'message.timeout.ms' to %lu before producing; config err was: %s",
+                timeout,
+                errstr
+            );
+        }
+        rd_kafka_topic_destroy(rkt);
+        return -3;
+    }
 
     /* Create topic */
     rkt = rd_kafka_topic_new(r, topic, topic_conf);
