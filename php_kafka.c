@@ -1140,7 +1140,7 @@ PHP_METHOD(Kafka, produceBatch)
             ++current_idx;
             if (current_idx == 50)
             {
-                status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode);
+                status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode, timeout);
                 if (status)
                 {
                     if (status < 0)
@@ -1160,7 +1160,7 @@ PHP_METHOD(Kafka, produceBatch)
     }
     if (current_idx)
     {//we still have some messages to produce...
-        status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode);
+        status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode, timeout);
         if (status)
         {
             if (status < 0)
