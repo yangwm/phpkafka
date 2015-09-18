@@ -82,14 +82,16 @@ ZEND_BEGIN_ARG_INFO(arginf_kafka_set_get_partition, 0)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce, 0, 0, 2)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, message)
+    ZEND_ARG_INFO(0, timeout)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO(arginf_kafka_produce_batch, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce_batch, 0, 0, 2)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, messages)
+    ZEND_ARG_INFO(0, timeout)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 2)
@@ -1012,7 +1014,7 @@ PHP_METHOD(Kafka, disconnect)
 }
 /* }}} end Kafka::disconnect */
 
-/* {{{ proto Kafka Kafka::produce( string $topic, string $message);
+/* {{{ proto Kafka Kafka::produce( string $topic, string $message [, int $timeout = 60000]);
     Produce a message, returns instance
     or throws KafkaException in case something went wrong
 */
@@ -1023,14 +1025,16 @@ PHP_METHOD(Kafka, produce)
     char *topic;
     char *msg;
     long reporting = connection->delivery_confirm_mode;
+    long timeout = 60000;
     int topic_len,
         msg_len,
         status = 0;
 
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|l",
             &topic, &topic_len,
-            &msg, &msg_len) == FAILURE) {
+            &msg, &msg_len,
+            &timeout) == FAILURE) {
         return;
     }
     if (!connection->producer)
@@ -1071,7 +1075,7 @@ PHP_METHOD(Kafka, produce)
 }
 /* }}} end Kafka::produce */
 
-/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages);
+/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages [, int $timeout = 60000]);
     Produce a batch of messages, returns instance
     or throws exceptions in case of error
 */
@@ -1086,14 +1090,16 @@ PHP_METHOD(Kafka, produceBatch)
     char *msg_batch[50];
     int msg_batch_len[50] = {0};
     long reporting = connection->delivery_confirm_mode;
+    long timeout = 60000;
     int topic_len,
         msg_len,
         current_idx = 0,
         status = 0;
     HashPosition pos;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa|l",
             &topic, &topic_len,
-            &arr) == FAILURE) {
+            &arr,
+            &timeout) == FAILURE) {
         return;
     }
     //get producer up and running
