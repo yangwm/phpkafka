@@ -235,10 +235,11 @@ final class Kafka
      * produce message on topic
      * @param string $topic
      * @param string $message
+     * @param int $timeout
      * @return $this
      * @throws \KafkaException
      */ 
-    public function produce($topic, $message)
+    public function produce($topic, $message, $timeout=5000)
     {
         $this->connected = true;
         //internal call, produce message on topic
@@ -251,10 +252,11 @@ final class Kafka
      * Causing any overhead (internally, array is iterated, and produced
      * @param string $topic
      * @param array $messages
+     * @param int $timeout
      * @return $this
      * @throws \KafkaException
      */
-    public function produceBatch($topic, array $messages)
+    public function produceBatch($topic, array $messages, $timeout=5000)
     {
         foreach ($messages as $msg) {
             //non-string messages are skipped silently ATM
