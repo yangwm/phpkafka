@@ -11,6 +11,7 @@ void kafka_init_queue(INIT_FUNC_ARGS);
 typedef struct _kafka_queue {
     zend_object             std;
     zval                    *msg_arr;
+    rd_kafka_queue_t        *rd_queue;
     long                    batch_size;
     long                    item_count;
     zend_bool               is_done;
