@@ -82,14 +82,16 @@ ZEND_BEGIN_ARG_INFO(arginf_kafka_set_get_partition, 0)
     ZEND_ARG_INFO(0, mode)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO(arginf_kafka_produce, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce, 0, 0, 2)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, message)
+    ZEND_ARG_INFO(0, timeout)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO(arginf_kafka_produce_batch, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_produce_batch, 0, 0, 2)
     ZEND_ARG_INFO(0, topic)
     ZEND_ARG_INFO(0, messages)
+    ZEND_ARG_INFO(0, timeout)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginf_kafka_consume, 0, 0, 2)
@@ -1012,7 +1014,7 @@ PHP_METHOD(Kafka, disconnect)
 }
 /* }}} end Kafka::disconnect */
 
-/* {{{ proto Kafka Kafka::produce( string $topic, string $message);
+/* {{{ proto Kafka Kafka::produce( string $topic, string $message [, int $timeout = 60000]);
     Produce a message, returns instance
     or throws KafkaException in case something went wrong
 */
@@ -1023,14 +1025,16 @@ PHP_METHOD(Kafka, produce)
     char *topic;
     char *msg;
     long reporting = connection->delivery_confirm_mode;
+    long timeout = 60000;
     int topic_len,
         msg_len,
         status = 0;
 
 
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|l",
             &topic, &topic_len,
-            &msg, &msg_len) == FAILURE) {
+            &msg, &msg_len,
+            &timeout) == FAILURE) {
         return;
     }
     if (!connection->producer)
@@ -1055,9 +1059,9 @@ PHP_METHOD(Kafka, produce)
         (int) connection->producer_partition
     );
     if (connection->delivery_confirm_mode == PHP_KAFKA_CONFIRM_EXTENDED)
-        status = kafka_produce_report(connection->producer, topic, msg, msg_len);
+        status = kafka_produce_report(connection->producer, topic, msg, msg_len, timeout);
     else
-        status = kafka_produce(connection->producer, topic, msg, msg_len, connection->delivery_confirm_mode);
+        status = kafka_produce(connection->producer, topic, msg, msg_len, connection->delivery_confirm_mode, timeout);
     switch (status)
     {
         case -1:
@@ -1066,12 +1070,15 @@ PHP_METHOD(Kafka, produce)
         case -2:
             zend_throw_exception(kafka_exception, "Connection failure, cannot produce message", 0 TSRMLS_CC);
             return;
+        case -3:
+            zend_throw_exception(kafka_exception, "Topic configuration error", 0 TSRMLS_CC);
+            return;
     }
     RETURN_ZVAL(object, 1, 0);
 }
 /* }}} end Kafka::produce */
 
-/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages);
+/* {{{ proto Kafka Kafka::produceBatch( string $topic, array $messages [, int $timeout = 60000]);
     Produce a batch of messages, returns instance
     or throws exceptions in case of error
 */
@@ -1086,14 +1093,16 @@ PHP_METHOD(Kafka, produceBatch)
     char *msg_batch[50];
     int msg_batch_len[50] = {0};
     long reporting = connection->delivery_confirm_mode;
+    long timeout = 60000;
     int topic_len,
         msg_len,
         current_idx = 0,
         status = 0;
     HashPosition pos;
-    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa",
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sa|l",
             &topic, &topic_len,
-            &arr) == FAILURE) {
+            &arr,
+            &timeout) == FAILURE) {
         return;
     }
     //get producer up and running
@@ -1131,7 +1140,7 @@ PHP_METHOD(Kafka, produceBatch)
             ++current_idx;
             if (current_idx == 50)
             {
-                status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode);
+                status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode, timeout);
                 if (status)
                 {
                     if (status < 0)
@@ -1151,7 +1160,7 @@ PHP_METHOD(Kafka, produceBatch)
     }
     if (current_idx)
     {//we still have some messages to produce...
-        status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode);
+        status = kafka_produce_batch(connection->producer, topic, msg_batch, msg_batch_len, current_idx, connection->delivery_confirm_mode, timeout);
         if (status)
         {
             if (status < 0)
