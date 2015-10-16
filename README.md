@@ -6,7 +6,7 @@ SRP build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branc
 
 ## Common issues:
 
-Here's a short list of common issues people run into when installing this extension (so far, there's only 1)
+Here's a short list of common issues people run into when installing this extension (only 1 issue so far)
 
 #### _"Unable to load dynamic library '/usr/lib64/php/modules/kafka.so' - librdkafka.so.1"_
 
@@ -25,7 +25,7 @@ sudo touch /etc/ld.so.conf.d/librd.conf
 echo "/usr/local/lib" >> /etc/ld.so.conf.d/librd.conf
 ```
 
-Or simply type `vim /etc/ld.so.conf.d/librd.conf`, when the editor opens, tab _":"_ (colon), and run the command `read !locate librdkafka.so.1`, delete the filename from the path (move your cursor to the last `/` of the line that just appeared in the file and type `d$` (delete until end of line). Save and close the file (`:wq`).
+Or simply type `vim /etc/ld.so.conf.d/librd.conf`, when the editor opens, tap _":"_ (colon), and run the command `read !locate librdkafka.so.1`, delete the filename from the path (move your cursor to the last `/` of the line that just appeared in the file and type `d$` (delete until end of line). Save and close the file (`:wq`).
 
 
 _Note:_
