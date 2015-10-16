@@ -4,6 +4,30 @@ Dev build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branc
 
 SRP build: [![Build Status](https://travis-ci.org/EVODelavega/phpkafka.svg?branch=feature%2FSRP)](https://travis-ci.org/EVODelavega/phpkafka)
 
+## Common issues:
+
+Here's a short list of common issues people run into when installing this extension (so far, there's only 1)
+
+#### _"Unable to load dynamic library '/usr/lib64/php/modules/kafka.so' - librdkafka.so.1"_
+
+What this, basically means is that PHP can't find the shared object (librdkafka) anywhere. Thankfully, the fix is trivial:
+First, make sure you've actually compiled and installed librdkafka. Then run these commands:
+
+```bash
+sudo updatedb
+locate librdkafka.so.1 # locate might not exist on some systems, like slackware, which uses slocate
+```
+
+The output should show a full path to the `librdkafka.so.1` file, probably _"/usr/local/lib/librdkafka.so.1"_. Edit `/etc/ld.so.conf` to make sure _"/usr/local/lib"_ is included when searching for libraries. Either add id directly to the aforementioned file, or if your system uses a /etc/ld.so.conf.d/ directory, create a new .conf file there:
+
+```bash
+sudo touch /etc/ld.so.conf.d/librd.conf
+echo "/usr/local/lib" >> /etc/ld.so.conf.d/librd.conf
+```
+
+Or simply type `vim /etc/ld.so.conf.d/librd.conf`, when the editor opens, tab _":"_ (colon), and run the command `read !locate librdkafka.so.1`, delete the filename from the path (move your cursor to the last `/` of the line that just appeared in the file and type `d$` (delete until end of line). Save and close the file (`:wq`).
+
+
 _Note:_
 
 Whatever gets merged into the master branch should work just fine. The main dev build is where small tweaks, bugfixes and minor improvements are tested (ie sort-of beta branch).
