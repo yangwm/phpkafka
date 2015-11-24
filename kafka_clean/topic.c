@@ -176,6 +176,8 @@ PHP_METHOD(KafkaTopic, __construct)
         topic->rk_type = RD_KAFKA_PRODUCER;
     }
     topic->topic_name = estrdup(topic_name);
+    //add reference to Kafka instance
+    zend_update_property(topic_ce, obj, "kafkaConnection", sizeof("kafkaConnection") -1, kafka TSRMLS_CC);
     //if init failed, see if we can't restore the connection to the Kafka instance?
     if (kafka_open_topic(topic))
     {
@@ -296,6 +298,8 @@ void kafka_init_topic(INIT_FUNC_ARGS)
     INIT_CLASS_ENTRY(ce, "KafkaTopic", topic_methods);
     ce.create_object = topic_create_handler;
     topic_ce = zend_register_internal_class(&ce TSRMLS_CC);
+    //add property for connection instance:
+    zend_declare_property_null(topic_ce, "kafkaConnection", sizeof("kafkaConnection") -1, ZEND_ACC_PRIVATE TSRMLS_CC);
     topic_ce->ce_flags |= ZEND_ACC_FINAL_CLASS;
     topic_ce->create_object = topic_create_handler;
     //default handlers

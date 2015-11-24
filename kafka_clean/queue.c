@@ -154,7 +154,7 @@ PHP_METHOD(KafkaQueue, __construct)
         mode = PHP_KAFKA_MODE_PRODUCER;
     }
     zend_update_property(queue_ce, this, "queueBuffer", sizeof("queueBuffer") -1, buffer TSRMLS_CC);
-    //keep a reference to the topic
+    //keep a reference to the topic, which in turn references the Kafka instance
     zend_update_property(queue_ce, this, "topic", sizeof("topic") -1, topic TSRMLS_CC);
     topic_internal = zend_object_store_get_object(topic TSRMLS_CC);
     if (topic->meta == NULL)
