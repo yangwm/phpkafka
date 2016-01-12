@@ -11,5 +11,5 @@ sudo ln -s librdkafka++.so.1 librdkafka++.so
 sudo ldconfig
 
 cd ~/phpkafka/
-php -c lib/kafka.ini lib/testkafka.php
-
+/usr/local/php-5.3/bin/php -c lib/kafka.ini lib/testkafka.php
+/usr/local/php-5.6/bin/php -c lib/kafka.ini lib/testkafka.php
