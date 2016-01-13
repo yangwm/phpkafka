@@ -1,5 +1,5 @@
 
-cd ~/phpkafka/lib/
+cd ~/phpkafka/lib/centos-6.7-64.bit/
 sudo cp librdkafka* /usr/local/lib/
 sudo cp centos-6.7-64.bit/php-5.3/kafka.so /usr/local/php-5.3/extensions/
 sudo cp centos-6.7-64.bit/php-5.6/kafka.so /usr/local/php-5.6/extensions/
